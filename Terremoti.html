@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visualizzazione Terremoti 3D con Glance</title>
+    <title>Visualizzazione Terremoti 3D con Three.js</title>
 
-    <!-- Carica Glance -->
-    <script src="https://cdn.jsdelivr.net/npm/@kitware/glance"></script>
+    <!-- Carica Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r150/three.min.js"></script>
+
     <!-- Carica PapaParse per il parsing del CSV -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
 
@@ -15,8 +16,8 @@
             margin: 0;
             font-family: Arial, sans-serif;
         }
-        #glance-container {
-            height: 100vh;
+        canvas {
+            display: block;
         }
     </style>
 </head>
@@ -24,15 +25,23 @@
     <!-- Sezione per caricare il file CSV -->
     <div>
         <input type="file" id="csvFile" onchange="handleFileSelect(event)">
-        <button onclick="clearViewer()">Pulisci Vista</button>
+        <button onclick="clearScene()">Pulisci Vista</button>
     </div>
 
-    <!-- Contenitore per il visualizzatore Glance -->
-    <div id="glance-container"></div>
-
+    <!-- Contenitore per il visualizzatore Three.js -->
     <script>
-        // Inizializza il visualizzatore Glance
-        const viewer = new Glance.Viewer('glance-container');
+        let scene, camera, renderer, points;
+
+        // Inizializza la scena, la camera e il renderer
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            camera.position.z = 100;
+        }
 
         // Funzione per caricare il file CSV
         function handleFileSelect(event) {
@@ -46,7 +55,7 @@
         function loadCSV(file) {
             Papa.parse(file, {
                 complete: function(results) {
-                    const points = results.data.map(row => {
+                    const pointsData = results.data.map(row => {
                         return {
                             x: parseFloat(row[0]),  // Coordinata X
                             y: parseFloat(row[1]),  // Coordinata Y
@@ -55,37 +64,54 @@
                         };
                     });
 
-                    // Carica i punti 3D su Glance
-                    loadModelFromCSV(points);
+                    // Crea i punti 3D da visualizzare
+                    createPoints(pointsData);
                 }
             });
         }
 
-        // Funzione per caricare i dati dei punti nel visualizzatore Glance
-        function loadModelFromCSV(points) {
-            // Crea un oggetto VTK in formato JSON da utilizzare con Glance
-            const vtkData = {
-                points: points.map(p => [p.x, p.y, p.z]), // Posizioni dei punti
-                scalars: points.map(p => p.md || 0), // Magnitudo o altre informazioni
-                pointData: {
-                    scalarNames: ['Magnitude']
-                }
-            };
+        // Funzione per creare e visualizzare i punti
+        function createPoints(data) {
+            const geometry = new THREE.BufferGeometry();
+            const positions = [];
+            const colors = [];
 
-            // Carica i dati nel visualizzatore Glance
-            viewer.loadModelFromData(vtkData);
-
-            // Imposta la vista della camera per inquadrare i dati
-            viewer.setCamera({
-                position: [100, 100, 100],  // Posizione della camera
-                target: [0, 0, 0]           // Obiettivo della camera
+            // Crea i punti 3D
+            data.forEach(point => {
+                positions.push(point.x, point.y, point.z);
+                colors.push(point.md / 10, 0, 0);  // Colore in base alla magnitudo
             });
+
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({
+                size: 0.5,
+                vertexColors: true
+            });
+
+            points = new THREE.Points(geometry, material);
+            scene.add(points);
+
+            animate();
         }
 
-        // Funzione per pulire il visualizzatore
-        function clearViewer() {
-            viewer.clear();
+        // Funzione per animare la scena
+        function animate() {
+            requestAnimationFrame(animate);
+            points.rotation.x += 0.01;
+            points.rotation.y += 0.01;
+            renderer.render(scene, camera);
         }
+
+        // Funzione per pulire la scena
+        function clearScene() {
+            scene.clear();
+            animate();  // Riavvia l'animazione
+        }
+
+        // Inizializza la scena
+        init();
     </script>
 </body>
 </html>
