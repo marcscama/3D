@@ -5,15 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Point Cloud with Three.js</title>
     <style>
-        body { margin: 0; overflow: hidden; }
+        body { margin: 0; }
         canvas { display: block; }
         #file-input {
             position: absolute;
             top: 20px;
             left: 20px;
-            z-index: 1;
+            z-index: 100;
             padding: 10px;
-            background-color: #ffffff;
+            background-color: #fff;
             border: 1px solid #ccc;
             cursor: pointer;
         }
@@ -36,11 +36,11 @@
 
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
 
-    // Funzione per caricare e leggere il CSV
+    // Funzione per caricare il CSV e visualizzare la point cloud
     function loadCSV(file) {
         const reader = new FileReader();
-        reader.onload = function(e) {
-            const data = e.target.result;
+        reader.onload = function(event) {
+            const data = event.target.result;
             const points = data.split('\n').map(line => line.split(',').map(val => parseFloat(val)));
             const geometry = new THREE.BufferGeometry();
             const vertices = [];
@@ -71,19 +71,10 @@
 
             animate();
         };
+        
+        // Leggi il file CSV come testo
         reader.readAsText(file);
     }
-
-    // Aggiungi un evento per il caricamento del file tramite il pulsante
-    const fileInput = document.getElementById('file-input');
-    fileInput.addEventListener('change', function(event) {
-        const file = event.target.files[0];
-        if (file) {
-            loadCSV(file);
-        }
-    });
-
-    camera.position.z = 500;
 
     // Funzione di animazione
     function animate() {
@@ -91,6 +82,16 @@
         controls.update();
         renderer.render(scene, camera);
     }
+
+    // Carica il file CSV quando l'utente seleziona un file
+    document.getElementById('file-input').addEventListener('change', function(event) {
+        const file = event.target.files[0];
+        if (file) {
+            loadCSV(file);
+        }
+    });
+
+    camera.position.z = 500;
 
     // Gestisce la dimensione della finestra per il rendering
     window.addEventListener('resize', () => {
