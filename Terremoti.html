@@ -3,105 +3,89 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Point Cloud with Three.js</title>
+    <title>Visualizzazione Terremoti 3D con Glance</title>
+
+    <!-- Carica Glance -->
+    <script src="https://cdn.jsdelivr.net/npm/@kitware/glance"></script>
+    <!-- Carica PapaParse per il parsing del CSV -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+
     <style>
-        body { margin: 0; }
-        canvas { display: block; }
-        #file-input {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            z-index: 100;
-            padding: 10px;
-            background-color: #fff;
-            border: 1px solid #ccc;
-            cursor: pointer;
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        #glance-container {
+            height: 100vh;
         }
     </style>
 </head>
 <body>
+    <!-- Sezione per caricare il file CSV -->
+    <div>
+        <input type="file" id="csvFile" onchange="handleFileSelect(event)">
+        <button onclick="clearViewer()">Pulisci Vista</button>
+    </div>
 
-<!-- Pulsante per caricare il file CSV -->
-<input type="file" id="file-input" accept=".csv" />
+    <!-- Contenitore per il visualizzatore Glance -->
+    <div id="glance-container"></div>
 
-<!-- Carica Three.js e OrbitControls.js come moduli -->
-<script type="module">
-    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.module.js';
-    import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.150.0/examples/js/controls/OrbitControls.js';
+    <script>
+        // Inizializza il visualizzatore Glance
+        const viewer = new Glance.Viewer('glance-container');
 
-    // Crea la scena, la camera e il renderer
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-
-    // Funzione per caricare il CSV e visualizzare la point cloud
-    function loadCSV(file) {
-        const reader = new FileReader();
-        reader.onload = function(event) {
-            const data = event.target.result;
-            const points = data.split('\n').map(line => line.split(',').map(val => parseFloat(val)));
-            const geometry = new THREE.BufferGeometry();
-            const vertices = [];
-            const colors = [];
-
-            // Estrai i dati X, Y, Z e MD
-            points.forEach(point => {
-                const [x, y, z, time, md] = point;
-                vertices.push(x, y, z);
-                
-                // Colora i punti in base alla Z
-                const color = new THREE.Color();
-                color.setHSL((z + 3000) / 6000, 1, 0.5); // Colore basato sulla Z
-                colors.push(color.r, color.g, color.b);
-            });
-
-            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-
-            // Colora i punti in base a MD (dimensioni proporzionali a MD)
-            const material = new THREE.PointsMaterial({
-                size: 5,
-                vertexColors: true,
-            });
-
-            const pointsObject = new THREE.Points(geometry, material);
-            scene.add(pointsObject);
-
-            animate();
-        };
-        
-        // Leggi il file CSV come testo
-        reader.readAsText(file);
-    }
-
-    // Funzione di animazione
-    function animate() {
-        requestAnimationFrame(animate);
-        controls.update();
-        renderer.render(scene, camera);
-    }
-
-    // Carica il file CSV quando l'utente seleziona un file
-    document.getElementById('file-input').addEventListener('change', function(event) {
-        const file = event.target.files[0];
-        if (file) {
-            loadCSV(file);
+        // Funzione per caricare il file CSV
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                loadCSV(file);
+            }
         }
-    });
 
-    camera.position.z = 500;
+        // Funzione per caricare e analizzare il CSV
+        function loadCSV(file) {
+            Papa.parse(file, {
+                complete: function(results) {
+                    const points = results.data.map(row => {
+                        return {
+                            x: parseFloat(row[0]),  // Coordinata X
+                            y: parseFloat(row[1]),  // Coordinata Y
+                            z: parseFloat(row[2]),  // Coordinata Z (profondità)
+                            md: parseFloat(row[4])  // Magnitudo o profondità (se presente)
+                        };
+                    });
 
-    // Gestisce la dimensione della finestra per il rendering
-    window.addEventListener('resize', () => {
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-    });
-</script>
+                    // Carica i punti 3D su Glance
+                    loadModelFromCSV(points);
+                }
+            });
+        }
 
+        // Funzione per caricare i dati dei punti nel visualizzatore Glance
+        function loadModelFromCSV(points) {
+            // Crea un oggetto VTK in formato JSON da utilizzare con Glance
+            const vtkData = {
+                points: points.map(p => [p.x, p.y, p.z]), // Posizioni dei punti
+                scalars: points.map(p => p.md || 0), // Magnitudo o altre informazioni
+                pointData: {
+                    scalarNames: ['Magnitude']
+                }
+            };
+
+            // Carica i dati nel visualizzatore Glance
+            viewer.loadModelFromData(vtkData);
+
+            // Imposta la vista della camera per inquadrare i dati
+            viewer.setCamera({
+                position: [100, 100, 100],  // Posizione della camera
+                target: [0, 0, 0]           // Obiettivo della camera
+            });
+        }
+
+        // Funzione per pulire il visualizzatore
+        function clearViewer() {
+            viewer.clear();
+        }
+    </script>
 </body>
 </html>
