@@ -1,176 +1,181 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="utf-8" />
-  <title>Flegrei — Three.js (latest import via Skypack)</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="UTF-8" />
+  <title>Terremoti 3D - Campi Flegrei</title>
   <style>
-    html,body{height:100%;margin:0;background:#000;color:#fff;font-family:system-ui,Segoe UI,Roboto,Arial}
-    canvas{display:block;width:100%;height:100%}
-    #status{position:absolute;left:8px;top:8px;z-index:1000;padding:6px 10px;border-radius:6px;background:rgba(0,0,0,0.6);pointer-events:none}
+    body { margin:0; overflow:hidden; background:#000; }
+    canvas { display:block; }
+    #status {
+      position: fixed;
+      top: 8px; left: 8px;
+      background: rgba(0,0,0,0.6);
+      color: #fff;
+      font-family: sans-serif;
+      padding: 6px 12px;
+      border-radius: 4px;
+      z-index: 1000;
+      pointer-events: none;
+      user-select: none;
+    }
   </style>
 </head>
 <body>
-  <div id="status">Loading CSV...</div>
-  <canvas id="canvas"></canvas>
 
-  <!-- proj4 + PapaParse as globals -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
-  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<div id="status">Caricamento dati...</div>
 
-  <script type="module">
-    // IMPORT THREE.js ESM from Skypack (serves modern/latest ESM)
-    import * as THREE from 'https://cdn.skypack.dev/three@latest';
-    import { OrbitControls } from 'https://cdn.skypack.dev/three@latest/examples/jsm/controls/OrbitControls.js';
+<script src="https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.165.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
 
-    const CSV_URL = 'https://api.cors.lol/?url=https://terremoti.ov.ingv.it/gossip/flegrei/events.csv';
-    const statusEl = document.getElementById('status');
-    function setStatus(msg, err=false){ statusEl.textContent = msg; statusEl.style.background = err ? 'rgba(128,0,0,0.8)' : 'rgba(0,0,0,0.6)'; }
+<script>
+  const statusEl = document.getElementById('status');
+  function setStatus(msg, isError = false) {
+    statusEl.textContent = msg;
+    statusEl.style.backgroundColor = isError ? 'rgba(128,0,0,0.85)' : 'rgba(0,0,0,0.6)';
+  }
 
-    // Three.js setup
-    const canvas = document.getElementById('canvas');
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
-    renderer.setPixelRatio(window.devicePixelRatio || 1);
+  // Definizione proiezione UTM zone 33N WGS84
+  proj4.defs("EPSG:32633","+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs");
+
+  // Setup scena, camera, renderer
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x111111);
+
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 1, 1e8);
+  camera.position.set(0, -20000, 12000);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.outputEncoding = THREE.sRGBEncoding;
+  });
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a0a0a);
-    const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1e9);
-    camera.position.set(0, -20000, 10000);
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true; controls.dampingFactor = 0.08;
-    window.addEventListener('resize', ()=>{ camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
-
-    let pointsMesh = null;
-
-    // helpers (same as before)
-    function hsvToRgb(h,s,v){
-      let r,g,b; const i=Math.floor(h*6); const f=h*6-i; const p=v*(1-s); const q=v*(1-f*s); const t=v*(1-(1-f)*s);
-      switch(i%6){ case 0: r=v; g=t; b=p; break; case 1: r=q; g=v; b=p; break; case 2: r=p; g=v; b=t; break; case 3: r=p; g=q; b=v; break; case 4: r=t; g=p; b=v; break; default: r=v; g=p; b=q; break; }
-      return [r,g,b];
+  // Funzione conversione HSV -> RGB
+  function hsvToRgb(h,s,v) {
+    const i = Math.floor(h*6);
+    const f = h*6 - i;
+    const p = v*(1-s);
+    const q = v*(1-f*s);
+    const t = v*(1-(1-f)*s);
+    switch(i % 6) {
+      case 0: return [v, t, p];
+      case 1: return [q, v, p];
+      case 2: return [p, v, t];
+      case 3: return [p, q, v];
+      case 4: return [t, p, v];
+      case 5: return [v, p, q];
     }
-    function mapZtoColors(zArr){
-      let zmin=Infinity,zmax=-Infinity; for (let z of zArr){ if (z<zmin) zmin=z; if (z>zmax) zmax=z; }
-      const n = zArr.length; const out = new Float32Array(n*3);
-      for (let i=0;i<n;i++){ const t = (zmax===zmin)?0.5:((zArr[i]-zmin)/(zmax-zmin)); const hue=(1.0-t)*0.8; const c=hsvToRgb(hue,1,1); out[i*3]=c[0]; out[i*3+1]=c[1]; out[i*3+2]=c[2];}
-      return out;
-    }
-    function mapMDToSizes(mdArr,minPx=2,maxPx=28){
-      const n = mdArr.length; const md4 = new Float64Array(n); let mn=Infinity,mx=-Infinity;
-      for (let i=0;i<n;i++){ const v=Number(mdArr[i]); const v4=Math.pow(v,4); md4[i]=v4; if(v4<mn)mn=v4; if(v4>mx)mx=v4; }
-      const s = new Float32Array(n);
-      for (let i=0;i<n;i++){ const t=(mx===mn)?0.5:((md4[i]-mn)/(mx-mn)); s[i]=minPx + t*(maxPx-minPx); }
-      return s;
-    }
+  }
 
-    function createPoints(positions, colors, sizes){
-      if (pointsMesh){ scene.remove(pointsMesh); pointsMesh.geometry.dispose(); pointsMesh.material.dispose(); pointsMesh=null; }
-      const geom = new THREE.BufferGeometry();
-      geom.setAttribute('position', new THREE.BufferAttribute(positions,3));
-      geom.setAttribute('color', new THREE.BufferAttribute(colors,3));
-      geom.setAttribute('size', new THREE.BufferAttribute(sizes,1));
-      geom.computeBoundingSphere();
+  // Funzione per creare le sfere istanziate
+  function createSpheres(points) {
+    const n = points.length;
 
-      const mat = new THREE.ShaderMaterial({
-        vertexColors: true,
-        uniforms: { scale: { value: window.innerHeight/2.0 } },
-        vertexShader: `
-          attribute float size;
-          varying vec3 vColor;
-          uniform float scale;
-          void main(){
-            vColor = color;
-            vec4 mv = modelViewMatrix * vec4(position,1.0);
-            gl_PointSize = size * (scale / -mv.z);
-            gl_Position = projectionMatrix * mv;
-          }
-        `,
-        fragmentShader: `
-          varying vec3 vColor;
-          void main(){
-            vec2 c = gl_PointCoord - vec2(0.5);
-            if (dot(c,c) > 0.25) discard;
-            gl_FragColor = vec4(vColor, 1.0);
-          }
-        `,
-        transparent:true, depthTest:true
+    // Geometry e material base
+    const geometry = new THREE.SphereGeometry(1, 8, 8);
+    const material = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.8 });
+
+    const mesh = new THREE.InstancedMesh(geometry, material, n);
+    const dummy = new THREE.Object3D();
+
+    // Trova min/max profondità e MD^4
+    let minZ = Infinity, maxZ = -Infinity;
+    let minMD4 = Infinity, maxMD4 = -Infinity;
+    points.forEach(p => {
+      if(p.z < minZ) minZ = p.z;
+      if(p.z > maxZ) maxZ = p.z;
+      const md4 = Math.pow(p.md, 4);
+      if(md4 < minMD4) minMD4 = md4;
+      if(md4 > maxMD4) maxMD4 = md4;
+    });
+
+    for(let i=0; i<n; i++) {
+      const p = points[i];
+      dummy.position.set(p.x, p.y, p.z);
+
+      // scala sfera in base a MD^4 normalizzato
+      const md4 = Math.pow(p.md,4);
+      const scaleNorm = (md4 - minMD4) / (maxMD4 - minMD4 || 1);
+      const scale = 5 + scaleNorm * 45;
+      dummy.scale.set(scale, scale, scale);
+
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+
+      // Colore arcobaleno da profondità
+      const t = (p.z - minZ) / (maxZ - minZ || 1);
+      const hue = (1 - t) * 0.8;
+      const [r,g,b] = hsvToRgb(hue, 1, 1);
+      mesh.setColorAt(i, new THREE.Color(r, g, b));
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceColor.needsUpdate = true;
+
+    scene.add(mesh);
+  }
+
+  // Funzione per scaricare e processare dati CSV
+  async function loadAndProcessData() {
+    setStatus("Scaricamento dati...");
+    try {
+      const resp = await fetch("https://api.cors.lol/?url=https://terremoti.ov.ingv.it/gossip/flegrei/events.csv");
+      const csvText = await resp.text();
+
+      setStatus("Parsing CSV...");
+      const data = Papa.parse(csvText, { header: true, skipEmptyLines: true }).data;
+
+      // Filtra e converte punti
+      const points = [];
+      data.forEach(r => {
+        const MD = parseFloat(r.MD);
+        if (!(MD > 0)) return;
+        const Lon = parseFloat(r.Longitude);
+        const Lat = parseFloat(r.Latitude);
+        const Depth = parseFloat(r.Depth);
+        if ([Lon, Lat, Depth].some(v => isNaN(v))) return;
+
+        // Conversione coordinate
+        const [x,y] = proj4("EPSG:4326", "EPSG:32633", [Lon, Lat]);
+        const z = -Depth * 1000; // metri, profondità negativa
+
+        points.push({ x, y, z, md: MD });
       });
 
-      const pts = new THREE.Points(geom, mat);
-      pts.frustumCulled = false;
-      scene.add(pts);
-      pointsMesh = pts;
-
-      // fit camera
-      const bs = geom.boundingSphere;
-      if (bs){ controls.target.copy(bs.center); controls.update(); const r=bs.radius; camera.position.set(bs.center.x, bs.center.y - r*2.2, bs.center.z + r*1.2); camera.lookAt(bs.center); }
-    }
-
-    // parse CSV block and process
-    function extractParseCSV(text){
-      const lines = text.split(/\r?\n/);
-      let start=-1;
-      for (let i=0;i<lines.length;i++){ if (lines[i].startsWith('#EventID')||lines[i].startsWith('EventID')){ start=i; break; } }
-      const csvText = (start>=0) ? [lines[start].replace(/^#/,'')].concat(lines.slice(start+1)).join('\n') : text;
-      const parsed = Papa.parse(csvText, { header:true, skipEmptyLines:true });
-      if (parsed.errors && parsed.errors.length) console.warn('PapaParse errors', parsed.errors.slice(0,5));
-      return parsed.data;
-    }
-
-    function lonLatToMerc(lons,lats){
-      const n=lons.length; const out = new Float32Array(n*2);
-      for (let i=0;i<n;i++){ const xy = proj4('EPSG:4326','EPSG:3857',[Number(lons[i]), Number(lats[i])]); out[i*2]=xy[0]; out[i*2+1]=xy[1]; }
-      return out;
-    }
-
-    function processRows(rows){
-      const lons=[], lats=[], depths=[], mds=[];
-      for (const r of rows){
-        const MD = Number(r['MD'] ?? r['Md'] ?? r['md']);
-        if (!(MD > 0)) continue;
-        const Lon = r['Longitude'] ?? r['Lon'] ?? r['lon']; const Lat = r['Latitude'] ?? r['Lat'] ?? r['lat']; const Depth = r['Depth'] ?? r['depth'] ?? r['DEPTH'];
-        if (Lon===undefined||Lat===undefined||Depth===undefined) continue;
-        const lon=Number(Lon), lat=Number(Lat), depth=Number(Depth);
-        if (!isFinite(lon)||!isFinite(lat)||!isFinite(depth)) continue;
-        lons.push(lon); lats.push(lat); depths.push(depth); mds.push(MD);
+      if(points.length === 0) {
+        setStatus("Nessun dato con MD > 0", true);
+        return;
       }
-      if (mds.length===0){ setStatus('Nessun record MD>0', true); return; }
-      setStatus(`Records: ${mds.length} — convertendo...`);
-      const merc = lonLatToMerc(lons,lats);
-      const n = mds.length; const pos = new Float32Array(n*3); const zArr = new Float32Array(n);
-      for (let i=0;i<n;i++){ pos[i*3]=merc[i*2]; pos[i*3+1]=merc[i*2+1]; pos[i*3+2] = -depths[i]*1000.0; zArr[i]=pos[i*3+2]; }
-      const colors = mapZtoColors(zArr); const sizes = mapMDToSizes(mds, 2, 28);
-      setStatus('Rendering...');
-      createPoints(pos, colors, sizes);
-      setStatus(`Visualizzati ${n} punti (MD>0)`);
+
+      setStatus(`Visualizzo ${points.length} eventi`);
+      createSpheres(points);
     }
-
-    // load CSV via proxy then process
-    async function loadCSV(){
-      try {
-        setStatus('Scaricamento CSV (proxy)...');
-        const res = await fetch(CSV_URL, { mode:'cors' });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const txt = await res.text();
-        setStatus('CSV ricevuto — parsing...');
-        const rows = extractParseCSV(txt);
-        processRows(rows);
-      } catch (err){
-        console.error(err);
-        setStatus('Errore: ' + (err.message || err), true);
-      }
+    catch(err) {
+      setStatus("Errore caricamento dati: " + err.message, true);
+      console.error(err);
     }
+  }
 
-    // animation
-    (function anim(){ requestAnimationFrame(anim); controls.update(); renderer.render(scene, camera); })();
+  // Animazione scena
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
 
-    // start
-    setStatus('Init — caricamento CSV...');
-    loadCSV();
+  loadAndProcessData();
+  animate();
 
-    // expose DEBUG info if needed
-    console.log('Three import via Skypack — THREE keys:', Object.keys(THREE).slice(0,20));
-  </script>
+</script>
+
 </body>
 </html>
