@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <title>Flegrei — Three.js CSV viewer (MD^4 size, rainbow by Z)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    html,body { height:100%; margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; background:#0b0b0f; color:#eee; }
+    #canvas { width:100%; height:100%; display:block; }
+    #ui {
+      position: absolute; left: 10px; top: 10px; z-index: 20;
+      background: rgba(255,255,255,0.92); color:#111; padding:10px; border-radius:8px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.45); max-width:380px;
+    }
+    button { margin:4px 6px 4px 0; padding:6px 10px; border-radius:6px; border:1px solid #bbb; background:#fff; cursor:pointer; }
+    #status { margin-top:8px; font-size:13px; color:#333; }
+    input[type=file]{ display:none; }
+    .small { font-size:12px; color:#666; margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <strong>Flegrei CSV viewer — Three.js (MD^4)</strong>
+    <div class="small">Colore = Z (arcobaleno). Dimensione punti ~ MD<sup>4</sup> (normalizzato).</div>
+    <div style="margin-top:8px;">
+      <button id="btnRemote">Carica CSV remoto (proxy fornito)</button>
+      <label><button id="btnLocal">Carica CSV locale</button><input id="fileInput" type="file" accept=".csv,.txt" /></label>
+      <button id="btnReset">Reset</button>
+    </div>
+    <div style="margin-top:8px;">
+      <label>Min size px: <input id="minSize" type="number" value="2" style="width:60px"></label>
+      <label style="margin-left:8px;">Max size px: <input id="maxSize" type="number" value="28" style="width:60px"></label>
+    </div>
+    <div id="status">Pronto — premi "Carica CSV remoto" o trascina un file sulla finestra.</div>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <!-- Globals needed by the module script (proj4, PapaParse) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <!-- module script: Three.js (latest) and OrbitControls as ES modules -->
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@latest/build/three.module.js';
+    import { OrbitControls } from 'https://unpkg.com/three@latest/examples/jsm/controls/OrbitControls.js';
+
+    // ---- UI elements
+    const CSV_PROXY = "https://api.cors.lol/?url=https://terremoti.ov.ingv.it/gossip/flegrei/events.csv";
+    const canvas = document.getElementById('canvas');
+    const btnRemote = document.getElementById('btnRemote');
+    const btnLocal = document.getElementById('btnLocal');
+    const fileInput = document.getElementById('fileInput');
+    const btnReset = document.getElementById('btnReset');
+    const statusEl = document.getElementById('status');
+    const minSizeInput = document.getElementById('minSize');
+    const maxSizeInput = document.getElementById('maxSize');
+
+    function setStatus(msg, isErr=false){
+      statusEl.textContent = msg;
+      statusEl.style.color = isErr ? '#a00' : '#333';
+    }
+
+    // ---- Three.js scene setup
+    const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0b0f);
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1e9);
+    camera.position.set(0, -20000, 10000);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; controls.dampingFactor = 0.08;
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    let pointsMesh = null;
+
+    // ---- helper: HSV -> RGB (0..1)
+    function hsvToRgb(h,s,v){
+      let r,g,b;
+      const i = Math.floor(h*6);
+      const f = h*6 - i;
+      const p = v*(1 - s);
+      const q = v*(1 - f*s);
+      const t = v*(1 - (1 - f)*s);
+      switch(i%6){
+        case 0: r=v; g=t; b=p; break;
+        case 1: r=q; g=v; b=p; break;
+        case 2: r=p; g=v; b=t; break;
+        case 3: r=p; g=q; b=v; break;
+        case 4: r=t; g=p; b=v; break;
+        default: r=v; g=p; b=q; break;
+      }
+      return [r,g,b];
+    }
+
+    // map Z -> rainbow colors
+    function mapZtoColorsFloat32(zarr){
+      let zmin = Infinity, zmax = -Infinity;
+      for (let v of zarr){ if (v < zmin) zmin = v; if (v > zmax) zmax = v; }
+      const n = zarr.length;
+      const colors = new Float32Array(n*3);
+      for (let i=0;i<n;i++){
+        const z = zarr[i];
+        const t = (zmax === zmin) ? 0.5 : ((z - zmin) / (zmax - zmin));
+        const hue = (1.0 - t) * 0.8; // hue range 0..0.8 (red -> violet)
+        const [r,g,b] = hsvToRgb(hue, 1.0, 1.0);
+        colors[i*3+0] = r; colors[i*3+1] = g; colors[i*3+2] = b;
+      }
+      return colors;
+    }
+
+    // map MD^4 normalized to sizes
+    function mapMDtoSizes(mdArray, minPx, maxPx){
+      const n = mdArray.length;
+      // compute md^4 for all (careful with negative/NaN: MD should be >0 by filter)
+      const md4 = new Float64Array(n);
+      let mn = Infinity, mx = -Infinity;
+      for (let i=0;i<n;i++){
+        const v = Number(mdArray[i]);
+        const v4 = Math.pow(v, 4);
+        md4[i] = v4;
+        if (v4 < mn) mn = v4;
+        if (v4 > mx) mx = v4;
+      }
+      const sizes = new Float32Array(n);
+      for (let i=0;i<n;i++){
+        const t = (mx === mn) ? 0.5 : ((md4[i] - mn) / (mx - mn));
+        sizes[i] = minPx + t * (maxPx - minPx);
+      }
+      return sizes;
+    }
+
+    // ---- create / update points
+    function createOrUpdatePoints(positions, colors, sizes){
+      // positions: Float32Array length 3N; colors: Float32Array 3N; sizes: Float32Array N
+      if (pointsMesh){
+        scene.remove(pointsMesh);
+        pointsMesh.geometry.dispose();
+        pointsMesh.material.dispose();
+        pointsMesh = null;
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+      geometry.computeBoundingSphere();
+
+      const material = new THREE.ShaderMaterial({
+        vertexColors: true,
+        uniforms: { scale: { value: window.innerHeight / 2.0 } },
+        vertexShader: `
+          attribute float size;
+          varying vec3 vColor;
+          uniform float scale;
+          void main(){
+            vColor = color;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            // perspective scale for point size
+            gl_PointSize = size * (scale / -mvPosition.z);
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vColor;
+          void main(){
+            // circular points
+            vec2 c = gl_PointCoord - vec2(0.5);
+            if (dot(c,c) > 0.25) discard;
+            gl_FragColor = vec4(vColor, 1.0);
+          }
+        `,
+        transparent: true,
+        depthTest: true
+      });
+
+      const points = new THREE.Points(geometry, material);
+      points.frustumCulled = false;
+      scene.add(points);
+      pointsMesh = points;
+
+      // fit camera to bounding sphere
+      const bs = geometry.boundingSphere;
+      if (bs){
+        controls.target.copy(bs.center);
+        controls.update();
+        const r = bs.radius;
+        camera.position.set(bs.center.x, bs.center.y - r*2.2, bs.center.z + r*1.2);
+        camera.lookAt(bs.center);
+      }
+    }
+
+    // ---- CSV parsing for GOSSIP: expect header with #EventID,Time,Latitude,Longitude,Depth,MD,...
+    function extractAndParseGossipCSV(text){
+      const lines = text.split(/\r?\n/);
+      let start = -1;
+      for (let i=0;i<lines.length;i++){
+        if (lines[i].startsWith('#EventID') || lines[i].startsWith('EventID')){
+          start = i;
+          break;
+        }
+      }
+      if (start >= 0){
+        const headerLine = lines[start].replace(/^#/, '');
+        const csvBlock = [headerLine].concat(lines.slice(start+1)).join('\n');
+        return Papa.parse(csvBlock, { header: true, skipEmptyLines: true }).data;
+      } else {
+        // fallback: try to parse whole file
+        return Papa.parse(text, { header: true, skipEmptyLines: true }).data;
+      }
+    }
+
+    // ---- convert lon/lat arrays to EPSG:3857 using global proj4
+    function lonLatToMercator(lons, lats){
+      const n = lons.length;
+      const arr = new Float32Array(n*2);
+      for (let i=0;i<n;i++){
+        const xy = proj4('EPSG:4326','EPSG:3857',[parseFloat(lons[i]), parseFloat(lats[i])]);
+        arr[i*2+0] = xy[0];
+        arr[i*2+1] = xy[1];
+      }
+      return arr;
+    }
+
+    // ---- main processing
+    function processRows(rows){
+      // collect arrays where MD > 0 and numeric
+      const lons = [], lats = [], depths = [], mds = [], times = [];
+      for (const r of rows){
+        // normalize keys
+        const MD = Number(r['MD'] ?? r['Md'] ?? r['md']);
+        if (!(MD > 0)) continue;
+        const Lon = r['Longitude'] ?? r['Lon'] ?? r['lon'];
+        const Lat = r['Latitude'] ?? r['Lat'] ?? r['lat'];
+        const Depth = r['Depth'] ?? r['depth'] ?? r['DEPTH'];
+        if (Lon === undefined || Lat === undefined || Depth === undefined) continue;
+        const lon = Number(Lon), lat = Number(Lat), depth = Number(Depth);
+        if (!isFinite(lon) || !isFinite(lat) || !isFinite(depth)) continue;
+        lons.push(lon); lats.push(lat); depths.push(depth); mds.push(MD); times.push(r['Time'] ?? '');
+      }
+      if (mds.length === 0) { setStatus('Nessun record MD>0 trovato.', true); return; }
+      setStatus(`Records validi: ${mds.length} — convertendo coordinate...`);
+
+      // convert lon/lat -> meters
+      const merc = lonLatToMercator(lons, lats); // Float32Array [x,y,...]
+      const n = mds.length;
+      const positions = new Float32Array(n*3);
+      const zarr = new Float32Array(n);
+      for (let i=0;i<n;i++){
+        const x = merc[i*2+0];
+        const y = merc[i*2+1];
+        const z = - (depths[i] * 1000.0); // Depth in km -> meters (negative down)
+        positions[i*3+0] = x;
+        positions[i*3+1] = y;
+        positions[i*3+2] = z;
+        zarr[i] = z;
+      }
+
+      // colors and sizes
+      const colors = mapZtoColorsFloat32(zarr);
+      const minPx = Math.max(0.5, Number(minSizeInput.value) || 2);
+      const maxPx = Math.max(minPx+0.1, Number(maxSizeInput.value) || 28);
+      const sizes = mapMDtoSizes(mds, minPx, maxPx);
+
+      setStatus('Rendering point cloud...');
+      createOrUpdatePoints(positions, colors, sizes);
+      setStatus(`Visualizzati ${n} punti (MD>0).`);
+    }
+
+    // ---- fetch via provided CORS proxy
+    async function loadRemoteViaProxy(){
+      setStatus('Scarico CSV tramite proxy...');
+      try {
+        const resp = await fetch(CSV_PROXY, { mode: 'cors' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const text = await resp.text();
+        const rows = extractAndParseGossipCSV(text);
+        processRows(rows);
+      } catch (err) {
+        console.error(err);
+        setStatus('Errore fetch remoto (CORS/proxy): ' + err.message, true);
+      }
+    }
+
+    // ---- local file handle
+    async function handleLocalFile(file){
+      setStatus('Lettura file locale: ' + file.name);
+      const txt = await file.text();
+      const rows = extractAndParseGossipCSV(txt);
+      processRows(rows);
+    }
+
+    // ---- drag & drop
+    window.addEventListener('dragover', (e)=>{ e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+    window.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const f = e.dataTransfer.files[0];
+      if (!f) return;
+      await handleLocalFile(f);
+    });
+
+    // UI event bindings
+    btnRemote.addEventListener('click', () => loadRemoteViaProxy());
+    btnLocal.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async (ev) => { if (ev.target.files.length) aw
