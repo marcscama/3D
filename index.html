@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="utf-8"/>
-<title>Terremoti 3D — Three.js</title>
+<title>Gossip-INGV-Terremoti dal 2005 al 07/2025 con MD > 0</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <style>
   html,body { margin:0; padding:0; width:100%; height:100%; background:#000; overflow:hidden; }
@@ -74,9 +74,9 @@
     controls.enableDamping = true;
 
     // Luci
-    const ambient = new THREE.AmbientLight(0xffffff, 0.15);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.1);
     scene.add(ambient);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
     scene.add(dirLight);
     scene.add(dirLight.target);
 
