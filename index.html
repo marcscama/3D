@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8"/>
+<title>Terremoti in 3D - MD > 0 - Gossip INGV-OV</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+  html,body { margin:0; padding:0; width:100%; height:100%; background:#000; overflow:hidden; }
+  #tooltip{
+    position:absolute;
+    padding:6px 10px;
+    background:rgba(0,0,0,0.8);
+    color:#fff;
+    font-family:sans-serif;
+    font-size:13px;
+    border-radius:6px;
+    pointer-events:none;
+    opacity:0;
+    transition:opacity 0.15s;
+    z-index:1000;
+  }
+  #sizeControl {
+    position: absolute;
+    left: 12px;
+    top: 12px;
+    z-index: 1001;
+    font-family: sans-serif;
+    color: #fff;
+    background: rgba(0,0,0,0.45);
+    padding: 8px 10px;
+    border-radius: 8px;
+    backdrop-filter: blur(4px);
+  }
+  #sizeControl label { display:block; font-size:13px; margin-bottom:6px; }
+  #sizeVal { font-weight:700; margin-left:8px; }
+  input[type="range"] { width:200px; }
+</style>
+</head>
+<body>
+  <div id="sizeControl">
+    <label>Size <span id="sizeVal">2.0</span></label>
+    <input id="sizeSlider" type="range" min="1" max="2" step="0.1" value="2"/>
+  </div>
+
+  <div id="tooltip"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.19.1/proj4.js"></script>
+
+  <script type="module">
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+  (async () => {
+    const CSV_URL = 'https://marcscama.github.io/3D/Terremoti-Gossip-2005-07-2025.csv';
+    const CRS_SRC = 'EPSG:4326', CRS_DST = 'EPSG:3857';
+    const tooltip = document.getElementById('tooltip');
+
+    // Slider UI
+    const slider = document.getElementById('sizeSlider');
+    const sizeVal = document.getElementById('sizeVal');
+    let currentExponent = parseFloat(slider.value);
+
+    function createGradientTexture(){
+      const canvas = document.createElement('canvas');
+      canvas.width = 1; canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      const gradient = ctx.createLinearGradient(0,0,0,256);
+      gradient.addColorStop(0, '#2e2d2d'); // scuro in alto
+      gradient.addColorStop(1, '#bfbfbf'); // chiaro in basso
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0,0,1,256);
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    const scene = new THREE.Scene();
+    scene.background = createGradientTexture();
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1e12);
+    camera.up.set(0,0,1);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = false; // ombre disattivate
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // Luci: ambient + directional (senza ombre)
+    const ambient = new THREE.AmbientLight(0xffffff, 0.45);
+    scene.add(ambient);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.35);
+    dirLight.castShadow = false;
+    scene.add(dirLight);
+    scene.add(dirLight.target);
+
+    const sphereGroup = new THREE.Group();
+    scene.add(sphereGroup);
+
+    function parseCSV(text){
+      const lines = text.split(/\r?\n/).filter(l=>l.trim());
+      const headerIdx = lines.findIndex(l => l.startsWith('Longitude,Latitude,Depth,MD,Time'));
+      if(headerIdx < 0) throw new Error('Header CSV non trovato');
+      const header = lines[headerIdx].split(',').map(h=>h.trim());
+      const rows = [];
+      for(let i = headerIdx + 1; i < lines.length; i++){
+        const cols = lines[i].split(',').map(c=>c.trim());
+        if(cols.length < header.length) continue;
+        const obj = {};
+        header.forEach((h,idx)=> obj[h] = cols[idx]);
+        rows.push(obj);
+      }
+      return rows;
+    }
+
+    try {
+      const resp = await fetch(CSV_URL);
+      if(!resp.ok) throw new Error('Fetch fallito: ' + resp.status);
+      const rows = parseCSV(await resp.text());
+
+      const pts = rows.map(r => {
+        const lon = parseFloat(r.Longitude), lat = parseFloat(r.Latitude);
+        const depth = parseFloat(r.Depth);
+        const z = Number.isFinite(depth) ? depth * -1000 : NaN;
+        const md = parseFloat(r.MD);
+        return { lon, lat, z, md, time: r.Time };
+      }).filter(p => Number.isFinite(p.lon) && Number.isFinite(p.lat) && Number.isFinite(p.z) && Number.isFinite(p.md));
+
+      // calcolo coordinate proiettate
+      const coords = new Float64Array(pts.length * 3);
+      for(let i=0;i<pts.length;i++){
+        const [x,y] = proj4(CRS_SRC, CRS_DST, [pts[i].lon, pts[i].lat]);
+        coords[i*3] = x; coords[i*3+1] = y; coords[i*3+2] = pts[i].z;
+      }
+
+      // bounding box e parametri
+      const bbox = new THREE.Box3();
+      for(let i=0;i<pts.length;i++){
+        bbox.expandByPoint(new THREE.Vector3(coords[i*3], coords[i*3+1], coords[i*3+2]));
+      }
+      const center = bbox.getCenter(new THREE.Vector3());
+      const sizeLen = bbox.getSize(new THREE.Vector3()).length();
+      const scaleFactor = Math.max(1, sizeLen * 0.00035);
+
+      // z min/max per colore
+      const zvals = [];
+      for(let i=0;i<pts.length;i++) zvals.push(coords[i*3+2]);
+      const zmin = Math.min(...zvals), zmax = Math.max(...zvals);
+
+      function zToRainbow(z){
+        const t = (z - zmin) / (zmax - zmin || 1);
+        const hue = (1 - t) * 300;
+        const c = new THREE.Color();
+        c.setHSL((hue % 360) / 360, 0.95, THREE.MathUtils.clamp(0.65 - 0.3 * t, 0.2, 0.8));
+        return c;
+      }
+
+      // limiti radius
+      const sphereMinRadius = Math.max(0.2, scaleFactor * 0.0001);
+      const sphereMaxRadius = Math.max(500, scaleFactor * 0.10);
+
+      // Geometria unità — la usiamo per tutti i mesh e modifichiamo scale
+      const unitGeom = new THREE.SphereGeometry(1, 16, 12);
+
+      // Creo i mesh con geometria unità e li scala alla dimensione iniziale usando currentExponent
+      for(let i=0;i<pts.length;i++){
+        const md = pts[i].md;
+        const color = zToRainbow(coords[i*3+2]);
+        const mat = new THREE.MeshPhongMaterial({
+          color,
+          specular: new THREE.Color(0xffffff),
+          shininess: 55,
+          emissive: color.clone().multiplyScalar(0.2),
+          emissiveIntensity: 0.3
+        });
+        const mesh = new THREE.Mesh(unitGeom, mat);
+        mesh.position.set(coords[i*3] - center.x, coords[i*3+1] - center.y, coords[i*3+2] - center.z);
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        mesh.userData = { md: md, time: pts[i].time, z: pts[i].z };
+        sphereGroup.add(mesh);
+      }
+
+      // posiziona il gruppo al centro geografico
+      sphereGroup.position.copy(center);
+
+      // camera setup
+      const dist = Math.max(sizeLen * 0.8, 3000);
+      camera.position.set(center.x + dist*0.6, center.y + dist*0.25, center.z + dist*0.55);
+      camera.near = Math.max(0.1, dist * 0.00001);
+      camera.far = Math.max(1e9, dist * 300, sizeLen * 300);
+      camera.updateProjectionMatrix();
+      controls.target.copy(center);
+      controls.update();
+
+      // funzione per calcolare raggio e applicare scale a tutti i mesh
+      function computeRadius(md, exponent){
+        // proteggo md=0 => raggio minimo
+        const base = Math.pow(md, exponent || 1);
+        let r = base * scaleFactor;
+        r = Math.min(Math.max(r, sphereMinRadius), sphereMaxRadius);
+        return r;
+      }
+      function updateSphereSizes(exponent){
+        for(let i=0; i < sphereGroup.children.length; i++){
+          const m = sphereGroup.children[i];
+          const md = m.userData.md;
+          const r = computeRadius(md, exponent);
+          // geometria unità => scala direttamente al raggio
+          m.scale.setScalar(r);
+        }
+      }
+
+      // inizializza dimensioni col valore corrente dello slider
+      updateSphereSizes(currentExponent);
+
+      // slider handling: cambia esponente in tempo reale
+      slider.addEventListener('input', (ev) => {
+        const val = parseFloat(ev.target.value);
+        currentExponent = val;
+        sizeVal.textContent = val.toFixed(1);
+        updateSphereSizes(currentExponent);
+      });
+
+      // resize window
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      // tooltip on click
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2();
+      window.addEventListener('click', (event) => {
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(sphereGroup.children);
+        if(intersects.length > 0){
+          const data = intersects[0].object.userData;
+          tooltip.innerHTML = `Data: ${data.time}<br>MD: ${data.md}<br>Profondità: ${data.z} m`;
+          tooltip.style.left = `${event.clientX + 10}px`;
+          tooltip.style.top  = `${event.clientY + 10}px`;
+          tooltip.style.opacity = 1;
+        } else {
+          tooltip.style.opacity = 0;
+        }
+      });
+
+      // animazione — rimozione della rotazione automatica richiesta
+      function animate(){
+        requestAnimationFrame(animate);
+        controls.update();
+
+        // aggiorna la luce direzionale per mantenere i riflessi coerenti rispetto alla camera
+        dirLight.position.copy(camera.position);
+        const camDir = new THREE.Vector3();
+        camera.getWorldDirection(camDir);
+        dirLight.target.position.copy(camera.position.clone().add(camDir.multiplyScalar(1000)));
+        dirLight.target.updateMatrixWorld();
+
+        renderer.render(scene, camera);
+      }
+      animate();
+
+    } catch(err){
+      console.error(err);
+    }
+  })();
+  </script>
+</body>
+</html>
