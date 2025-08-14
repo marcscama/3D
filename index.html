@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8"/>
+<title>Terremoti in 3D - MD > 0 - Gossip INGV-OV</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+  }
+  #tooltip {
+    position: absolute;
+    padding: 6px 10px;
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    font-family: sans-serif;
+    font-size: 13px;
+    border-radius: 6px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 1000;
+  }
+  .uiBox {
+    position: absolute;
+    left: 12px;
+    z-index: 1001;
+    width: 260px;
+    font-family: sans-serif;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.45);
+    padding: 10px;
+    border-radius: 8px;
+    backdrop-filter: blur(4px);
+    box-sizing: border-box;
+  }
+  #sizeControl { top: 12px; }
+  #pencilControl { top: 88px; }
+  label { display: block; font-size: 13px; margin-bottom: 6px; }
+  #sizeVal { font-weight: 700; margin-left: 8px; }
+  input[type="range"] { width: 100%; }
+  #pencilControl .row { display: flex; gap: 8px; align-items: center; }
+  #pencilControl button { margin-top: 8px; padding: 6px 10px; border-radius: 6px; border: 0; cursor: pointer; background: #222; color: #fff; }
+  #pencilControl input[type="color"] { width: 36px; height: 28px; padding: 0; border: 0; background: transparent; }
+  #pencilControl .thin { font-size: 12px; color: #ddd; margin-top: 6px; }
+</style>
+</head>
+<body>
+  <div id="sizeControl" class="uiBox">
+    <label>Size <span id="sizeVal">2.0</span></label>
+    <input id="sizeSlider" type="range" min="1" max="2" step="0.1" value="2"/>
+  </div>
+  <div id="pencilControl" class="uiBox">
+    <label><input id="pencilToggle" type="checkbox"> Abilita penna (P)</label>
+    <div class="row">
+      <div style="flex:1;">
+        <label>Colore:</label>
+        <input id="pencilColor" type="color" value="#ff0000">
+      </div>
+      <div style="width:110px;">
+        <label>Spessore: <span id="thickVal">6</span></label>
+        <input id="thickSlider" type="range" min="1" max="100" step="1" value="6"/>
+      </div>
+    </div>
+    <div style="margin-top:8px;">
+      <button id="clearBtn">Cancella tutto</button>
+    </div>
+    <div class="thin"></div>
+  </div>
+  <div id="tooltip"></div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.19.1/proj4.js"></script>
+  <script type="module">
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+  import { Line2 } from 'three/addons/lines/Line2.js';
+  import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+  import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+
+  (async () => {
+    const CSV_URL = 'https://marcscama.github.io/3D/Terremoti-Gossip-2005-07-2025.csv';
+    const CRS_SRC = 'EPSG:4326', CRS_DST = 'EPSG:3857';
+    const tooltip = document.getElementById('tooltip');
+    const slider = document.getElementById('sizeSlider');
+    const sizeVal = document.getElementById('sizeVal');
+    let currentExponent = parseFloat(slider.value);
+
+    function createGradientTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1; canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      const gradient = ctx.createLinearGradient(0, 0, 0, 256);
+      gradient.addColorStop(0, '#2e2d2d');
+      gradient.addColorStop(1, '#bfbfbf');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 1, 256);
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    const scene = new THREE.Scene();
+    scene.background = createGradientTexture();
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1e12);
+    camera.up.set(0, 0, 1);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+    scene.add(ambient);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.55);
+    scene.add(dirLight);
+    scene.add(dirLight.target);
+
+    const sphereGroup = new THREE.Group();
+    scene.add(sphereGroup);
+
+    function parseCSV(text) {
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      const headerIdx = lines.findIndex(l => /longitude/i.test(l) && /latitude/i.test(l));
+      if (headerIdx < 0) throw new Error('Header CSV non trovato');
+      const header = lines[headerIdx].split(',').map(h => h.trim().replace(/^#/, ''));
+      const mapIdx = {};
+      header.forEach((h, i) => { mapIdx[h.toLowerCase()] = i; });
+      const rows = [];
+      for (let i = headerIdx + 1; i < lines.length; i++) {
+        const cols = lines[i].split(',').map(c => c.trim());
+        if (cols.length < 3) continue;
+        rows.push(cols);
+      }
+      return rows.map(cols => ({
+        Longitude: parseFloat(cols[mapIdx['longitude']]),
+        Latitude: parseFloat(cols[mapIdx['latitude']]),
+        Depth: parseFloat(cols[mapIdx['depth']]),
+        MD: parseFloat(cols[mapIdx['md']]),
+        Time: cols[mapIdx['time']] || ''
+      }));
+    }
+
+    try {
+      const resp = await fetch(CSV_URL);
+      if (!resp.ok) throw new Error('Fetch fallito: ' + resp.status);
+      const rows = parseCSV(await resp.text());
+      const pts = rows.map(r => {
+        const lon = parseFloat(r.Longitude), lat = parseFloat(r.Latitude);
+        const depth = parseFloat(r.Depth);
+        const z = Number.isFinite(depth) ? depth * -1000 : NaN;
+        const md = parseFloat(r.MD);
+        return { lon, lat, z, md, time: r.Time ?? '' };
+      }).filter(p => Number.isFinite(p.lon) && Number.isFinite(p.lat) && Number.isFinite(p.z) && Number.isFinite(p.md));
+
+      const coords = new Float64Array(pts.length * 3);
+      for (let i = 0; i < pts.length; i++) {
+        const [x, y] = proj4(CRS_SRC, CRS_DST, [pts[i].lon, pts[i].lat]);
+        coords[i * 3] = x; coords[i * 3 + 1] = y; coords[i * 3 + 2] = pts[i].z;
+      }
+
+      const bbox = new THREE.Box3();
+      for (let i = 0; i < pts.length; i++) {
+        bbox.expandByPoint(new THREE.Vector3(coords[i * 3], coords[i * 3 + 1], coords[i * 3 + 2]));
+      }
+
+      const center = bbox.getCenter(new THREE.Vector3());
+      const sizeLen = bbox.getSize(new THREE.Vector3()).length();
+      const scaleFactor = Math.max(1, sizeLen * 0.00035);
+
+      const zvals = [];
+      for (let i = 0; i < pts.length; i++) zvals.push(coords[i * 3 + 2]);
+      const zmin = Math.min(...zvals), zmax = Math.max(...zvals);
+
+      function zToRainbow(z) {
+        const t = (z - zmin) / (zmax - zmin || 1);
+        const hue = (1 - t) * 300;
+        const c = new THREE.Color();
+        c.setHSL((hue % 360) / 360, 0.95, THREE.MathUtils.clamp(0.65 - 0.3 * t, 0.2, 0.8));
+        return c;
+      }
+
+      const sphereMinRadius = Math.max(0.2, scaleFactor * 0.001);
+      const sphereMaxRadius = Math.max(500, scaleFactor * 0.10);
+      const unitGeom = new THREE.SphereGeometry(1, 32, 32);
+
+      for (let i = 0; i < pts.length; i++) {
+        const md = pts[i].md;
+        const color = zToRainbow(coords[i * 3 + 2]);
+        const mat = new THREE.MeshPhysicalMaterial({
+          color: color,
+          emissive: color.clone().multiplyScalar(0.2),
+          emissiveIntensity: 0.2,
+          metalness: 0.1,
+          roughness: 0.3,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.1
+        });
+        const mesh = new THREE.Mesh(unitGeom, mat);
+        mesh.position.set(coords[i * 3] - center.x, coords[i * 3 + 1] - center.y, coords[i * 3 + 2] - center.z);
+        mesh.userData = { md: md, time: pts[i].time, z: pts[i].z };
+        sphereGroup.add(mesh);
+      }
+
+      sphereGroup.position.copy(center);
+
+      // cubo + ticks + labels (lasciato intatto)
+      const cubeSide = 10000;
+      const half = cubeSide * 0.5;
+      const cubeCenterWorld = new THREE.Vector3(1572000, 4985800, -5000);
+      const cx = cubeCenterWorld.x, cy = cubeCenterWorld.y, cz = cubeCenterWorld.z;
+
+      const corners = [
+        new THREE.Vector3(cx - half, cy - half, cz - half), // 0: (-, -, -)
+        new THREE.Vector3(cx + half, cy - half, cz - half), // 1: (+, -, -)
+        new THREE.Vector3(cx + half, cy + half, cz - half), // 2: (+, +, -)
+        new THREE.Vector3(cx - half, cy + half, cz - half), // 3: (-, +, -)
+        new THREE.Vector3(cx - half, cy - half, cz + half), // 4: (-, -, +)
+        new THREE.Vector3(cx + half, cy - half, cz + half), // 5: (+, -, +)
+        new THREE.Vector3(cx + half, cy + half, cz + half), // 6: (+, +, +)
+        new THREE.Vector3(cx - half, cy + half, cz + half)  // 7: (-, +, +)
+      ];
+
+      const edgePairs = [
+        [0, 1], [1, 2], [2, 3], [3, 0],
+        [4, 5], [5, 6], [6, 7], [7, 4],
+        [0, 4], [1, 5], [2, 6], [3, 7]
+      ];
+
+      const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 1.0, linewidth: 2 });
+      const cubeEdgesGroup = new THREE.Group();
+      const edgeLines = [];
+
+      for (let i = 0; i < edgePairs.length; i++) {
+        const [a, b] = edgePairs[i];
+        const geom = new THREE.BufferGeometry().setFromPoints([corners[a], corners[b]]);
+        const line = new THREE.Line(geom, edgeMaterial.clone());
+        cubeEdgesGroup.add(line);
+        edgeLines.push({ line, pair: [a, b] });
+      }
+
+      scene.add(cubeEdgesGroup);
+
+      const faces = {
+        px: (v) => v.x === cx + half,
+        nx: (v) => v.x === cx - half,
+        py: (v) => v.y === cy + half,
+        ny: (v) => v.y === cy - half,
+        pz: (v) => v.z === cz + half,
+        nz: (v) => v.z === cz - half
+      };
+
+      const faceEdgeMap = {};
+      for (let fname of Object.keys(faces)) {
+        faceEdgeMap[fname] = [];
+        for (let ei = 0; ei < edgeLines.length; ei++) {
+          const pair = edgeLines[ei].pair;
+          const va = corners[pair[0]], vb = corners[pair[1]];
+          if (faces[fname](va) && faces[fname](vb)) faceEdgeMap[fname].push(ei);
+        }
+      }
+
+      function updateCubeFaceVisibility() {
+        const camVec = camera.position.clone().sub(cubeCenterWorld).normalize();
+        const normals = {
+          px: new THREE.Vector3(1, 0, 0),
+          nx: new THREE.Vector3(-1, 0, 0),
+          py: new THREE.Vector3(0, 1, 0),
+          ny: new THREE.Vector3(0, -1, 0),
+          pz: new THREE.Vector3(0, 0, 1),
+          nz: new THREE.Vector3(0, 0, -1)
+        };
+        let bestFace = null;
+        let bestDot = -Infinity;
+        for (let k in normals) {
+          const d = normals[k].dot(camVec);
+          if (d > bestDot) { bestDot = d; bestFace = k; }
+        }
+        for (let ei = 0; ei < edgeLines.length; ei++) {
+          const line = edgeLines[ei].line;
+          const shouldHide = faceEdgeMap[bestFace].includes(ei);
+          line.visible = !shouldHide;
+        }
+        tickObjects.forEach(t => {
+          const isOnPyFace = faceEdgeMap['py'].includes(t.edgeIdx);
+          if (isOnPyFace) {
+            t.line.visible = true;
+            t.labelMesh.visible = true;
+          } else {
+            const hide = faceEdgeMap[bestFace].includes(t.edgeIdx);
+            t.line.visible = !hide;
+            t.labelMesh.visible = !hide;
+          }
+        });
+      }
+
+      // ticks+labels
+      const verticalEdgeIndices = [8, 9, 10, 11];
+      const depthTicks = [0, -2000, -4000, -6000, -8000, -10000];
+      const tickObjects = [];
+      const tickMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 4 });
+
+      function createLabelMesh(text, scaleWorld) {
+        const fontSize = 40;
+        const padding = 12;
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        ctx.font = `${fontSize}px sans-serif`;
+        const metrics = ctx.measureText(text);
+        const w = Math.ceil(metrics.width) + padding * 2;
+        const h = Math.ceil(fontSize * 1.2) + padding * 2;
+        canvas.width = w; canvas.height = h;
+        ctx.clearRect(0, 0, w, h);
+        ctx.font = `${fontSize}px sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#000000';
+        ctx.fillText(text, padding, h / 2);
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.needsUpdate = true;
+        tex.magFilter = THREE.LinearFilter;
+        tex.minFilter = THREE.LinearFilter;
+        const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
+        const aspect = w / h;
+        const planeGeom = new THREE.PlaneGeometry(scaleWorld * aspect, scaleWorld);
+        const mesh = new THREE.Mesh(planeGeom, mat);
+        mesh.renderOrder = 999;
+        mesh.rotation.x = Math.PI / 2;
+        return mesh;
+      }
+
+      verticalEdgeIndices.forEach((edgeIdx) => {
+        const pair = edgePairs[edgeIdx];
+        const top = corners[pair[1]];
+        const bottom = corners[pair[0]];
+        const edgeMid = new THREE.Vector3().addVectors(top, bottom).multiplyScalar(0.5);
+        const outDir = new THREE.Vector3(edgeMid.x - cx, edgeMid.y - cy, 0).normalize();
+        if (outDir.length() === 0) outDir.set(1, 0, 0);
+        const tickLen = cubeSide * 0.03;
+        const labelOffset = cubeSide * 0.06;
+        const labelScaleWorld = cubeSide * 0.06;
+        const topZ = cz + half, bottomZ = cz - half;
+        depthTicks.forEach((d) => {
+          const tt = (topZ - d) / (topZ - bottomZ);
+          const pos = new THREE.Vector3().lerpVectors(top, bottom, tt);
+          const start = pos.clone();
+          const end = pos.clone().add(outDir.clone().multiplyScalar(tickLen));
+          const geom = new THREE.BufferGeometry().setFromPoints([start, end]);
+          const tickLine = new THREE.Line(geom, tickMaterial.clone());
+          scene.add(tickLine);
+          const labelPos = end.clone().add(outDir.clone().multiplyScalar(labelOffset));
+          const labelMesh = createLabelMesh(`${d} m`, labelScaleWorld);
+          labelMesh.position.copy(labelPos);
+          scene.add(labelMesh);
+          tickObjects.push({ edgeIdx, line: tickLine, labelMesh });
+        });
+      });
+
+      updateCubeFaceVisibility();
+
+      const dist = Math.max(sizeLen * 0.8, 3000);
+      camera.position.set(center.x + dist * 0.6, center.y + dist * 0.25, center.z + dist * 0.55);
+      camera.near = Math.max(0.1, dist * 0.00001);
+      camera.far = Math.max(1e9, dist * 300, sizeLen * 300);
+      camera.updateProjectionMatrix();
+      controls.target.copy(center);
+      controls.update();
+
+      function computeRadius(md, exponent) {
+        const base = Math.pow(md, exponent || 1);
+        let r = base * scaleFactor;
+        r = Math.min(Math.max(r, sphereMinRadius), sphereMaxRadius);
+        return r;
+      }
+
+      function updateSphereSizes(exponent) {
+        for (let i = 0; i < sphereGroup.children.length; i++) {
+          const m = sphereGroup.children[i];
+          const md = m.userData.md;
+          const r = computeRadius(md, exponent);
+          m.scale.setScalar(r);
+        }
+      }
+
+      updateSphereSizes(currentExponent);
+
+      slider.addEventListener('input', (ev) => {
+        const val = parseFloat(ev.target.value);
+        currentExponent = val;
+        sizeVal.textContent = val.toFixed(1);
+        updateSphereSizes(currentExponent);
+      });
+
+      // ---------- Nuove richieste: left draw, right pan, middle zoom, snap=100, MD>2.5 ----------
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2();
+
+      const pencilToggle = document.getElementById('pencilToggle');
+      const pencilColor = document.getElementById('pencilColor');
+      const thickSlider = document.getElementById('thickSlider');
+      const thickVal = document.getElementById('thickVal');
+      const clearBtn = document.getElementById('clearBtn');
+      thickVal.textContent = thickSlider.value;
+
+      const strokesGroup = new THREE.Group();
+      sphereGroup.add(strokesGroup);
+
+      let previewClassic = null;
+      let isDrawing = false;
+      let currentPoints = [];
+      let lastPoint = null;
+      const minVertexDistance = Math.max(0.5, sizeLen * 0.0002);
+      const tempWorld = new THREE.Vector3();
+
+      // draw plane (camera-aligned) in WORLD coords
+      const drawPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+      let drawPlanePoint = null;
+
+      // snap distance and MD threshold
+      const SNAP_DISTANCE = 100; // user requested
+      const MD_THRESHOLD = 2.5; // user requested
+
+      // helpers: find sphere nearest to ray (only MD>MD_THRESHOLD)
+      function findNearestSphereToRay(ray, maxDist) {
+        let nearest = null;
+        let minDist = maxDist;
+        sphereGroup.children.forEach(sphere => {
+          if (!sphere.isMesh) return;
+          const md = (sphere.userData && sphere.userData.md) ? sphere.userData.md : 0;
+          if (!(md > MD_THRESHOLD)) return; // only large spheres
+          sphere.getWorldPosition(tempWorld);
+          const v = tempWorld.clone().sub(ray.origin);
+          const t = v.dot(ray.direction);
+          const closest = ray.origin.clone().add(ray.direction.clone().multiplyScalar(t));
+          const dist = tempWorld.distanceTo(closest);
+          if (dist < minDist) {
+            minDist = dist;
+            nearest = sphere;
+          }
+        });
+        return nearest;
+      }
+
+      // find nearest sphere to a world point (only MD>MD_THRESHOLD)
+      function findNearestSphereWorld(point, maxDistance) {
+        let nearest = null;
+        let minDist = maxDistance;
+        sphereGroup.children.forEach(sphere => {
+          if (!sphere.isMesh) return;
+          const md = (sphere.userData && sphere.userData.md) ? sphere.userData.md : 0;
+          if (!(md > MD_THRESHOLD)) return; // only large spheres
+          sphere.getWorldPosition(tempWorld);
+          const dist = tempWorld.distanceTo(point);
+          if (dist < minDist) { minDist = dist; nearest = sphere; }
+        });
+        return nearest;
+      }
+
+      // set draw plane perpendicular to camera and through worldPoint
+      function setupDrawPlaneAtPoint(worldPoint) {
+        drawPlanePoint = worldPoint.clone();
+        const camDir = camera.getWorldDirection(new THREE.Vector3()).clone();
+        drawPlane.setFromNormalAndCoplanarPoint(camDir.clone().negate(), drawPlanePoint);
+      }
+
+      // update plane normal when camera pans/zooms so it stays camera-aligned
+      function updateDrawPlaneFromCamera() {
+        if (!drawPlanePoint) return;
+        const camDir = camera.getWorldDirection(new THREE.Vector3()).clone();
+        drawPlane.setFromNormalAndCoplanarPoint(camDir.clone().negate(), drawPlanePoint);
+      }
+
+      function worldPointFromMouse_locked(clientX, clientY) {
+        updateDrawPlaneFromCamera();
+        const ndc = new THREE.Vector2(
+          (clientX / window.innerWidth) * 2 - 1,
+          -(clientY / window.innerHeight) * 2 + 1
+        );
+        raycaster.setFromCamera(ndc, camera);
+        const out = new THREE.Vector3();
+        const ok = raycaster.ray.intersectPlane(drawPlane, out);
+        if (ok) {
+          const nearest = findNearestSphereWorld(out, SNAP_DISTANCE);
+          if (nearest) nearest.getWorldPosition(out);
+          return out.clone();
+        }
+        return null;
+      }
+
+      // preview update
+      function createOrUpdatePreviewClassic() {
+        if (!previewClassic) {
+          const geom = new THREE.BufferGeometry();
+          const mat = new THREE.LineBasicMaterial({ color: new THREE.Color(pencilColor.value), transparent: true });
+          previewClassic = new THREE.Line(geom, mat);
+          previewClassic.frustumCulled = false;
+          scene.add(previewClassic);
+        }
+        const pts = currentPoints;
+        if (!pts || pts.length === 0) {
+          previewClassic.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([]), 3));
+          previewClassic.geometry.setDrawRange(0, 0);
+        } else if (pts.length === 1) {
+          const arr = new Float32Array(6);
+          arr[0] = pts[0].x; arr[1] = pts[0].y; arr[2] = pts[0].z;
+          arr[3] = pts[0].x; arr[4] = pts[0].y; arr[5] = pts[0].z;
+          previewClassic.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+          previewClassic.geometry.setDrawRange(0, 2);
+        } else {
+          const arr = new Float32Array(pts.length * 3);
+          for (let i = 0; i < pts.length; i++) {
+            arr[i * 3] = pts[i].x;
+            arr[i * 3 + 1] = pts[i].y;
+            arr[i * 3 + 2] = pts[i].z;
+          }
+          previewClassic.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+          previewClassic.geometry.setDrawRange(0, pts.length);
+        }
+        previewClassic.material.color.set(pencilColor.value);
+        previewClassic.material.needsUpdate = true;
+        if (previewClassic.geometry.attributes.position) previewClassic.geometry.attributes.position.needsUpdate = true;
+      }
+
+      function removePreviewClassic() {
+        if (previewClassic) {
+          try { if (previewClassic.geometry) previewClassic.geometry.dispose(); } catch (e) {}
+          try { if (previewClassic.material) previewClassic.material.dispose(); } catch (e) {}
+          scene.remove(previewClassic);
+          previewClassic = null;
+        }
+      }
+
+      function commitStrokeWorldToLocalAndSave() {
+        if (currentPoints.length < 2) {
+          currentPoints = [];
+          lastPoint = null;
+          removePreviewClassic();
+          return;
+        }
+        const localPts = currentPoints.map(p => {
+          const c = p.clone();
+          sphereGroup.worldToLocal(c);
+          return c;
+        });
+
+        const positions = new Float32Array(localPts.length * 3);
+        for (let i = 0; i < localPts.length; i++) {
+          positions[i * 3] = localPts[i].x;
+          positions[i * 3 + 1] = localPts[i].y;
+          positions[i * 3 + 2] = localPts[i].z;
+        }
+        const lineGeom = new LineGeometry();
+        lineGeom.setPositions(positions);
+        const lineMat = new LineMaterial({
+          linewidth: parseFloat(thickSlider.value),
+          dashed: false,
+          alphaToCoverage: true
+        });
+        lineMat.resolution = new THREE.Vector2(window.innerWidth, window.innerHeight);
+        lineMat.color = new THREE.Color(pencilColor.value);
+        const line = new Line2(lineGeom, lineMat);
+        line.computeLineDistances();
+        line.scale.set(1, 1, 1);
+        strokesGroup.add(line);
+
+        currentPoints = [];
+        lastPoint = null;
+        removePreviewClassic();
+      }
+
+      // save/restore controls state
+      const prevControls = {};
+      function saveControlsState() {
+        prevControls.enableRotate = controls.enableRotate;
+        prevControls.enablePan = controls.enablePan;
+        prevControls.enableZoom = controls.enableZoom;
+        prevControls.mouseButtons = {
+          LEFT: controls.mouseButtons.LEFT,
+          MIDDLE: controls.mouseButtons.MIDDLE,
+          RIGHT: controls.mouseButtons.RIGHT
+        };
+      }
+      function restoreControlsState() {
+        controls.enableRotate = !!prevControls.enableRotate;
+        controls.enablePan = !!prevControls.enablePan;
+        controls.enableZoom = !!prevControls.enableZoom;
+        if (prevControls.mouseButtons) {
+          controls.mouseButtons.LEFT = prevControls.mouseButtons.LEFT;
+          controls.mouseButtons.MIDDLE = prevControls.mouseButtons.MIDDLE;
+          controls.mouseButtons.RIGHT = prevControls.mouseButtons.RIGHT;
+        }
+      }
+
+      // pointer handlers: left draws (button 0)
+      function onPointerDown(e) {
+        // left button starts drawing only when pen-mode active
+        if (!pencilToggle.checked) return;
+        if (e.button !== 0) return;
+        const ndc = new THREE.Vector2(
+          (e.clientX / window.innerWidth) * 2 - 1,
+          -(e.clientY / window.innerHeight) * 2 + 1
+        );
+        raycaster.setFromCamera(ndc, camera);
+        const nearestByRay = findNearestSphereToRay(raycaster.ray, SNAP_DISTANCE);
+        if (nearestByRay) {
+          nearestByRay.getWorldPosition(tempWorld);
+          setupDrawPlaneAtPoint(tempWorld);
+        } else {
+          setupDrawPlaneAtPoint(bbox.getCenter(new THREE.Vector3()));
+        }
+
+        isDrawing = true;
+        currentPoints = [];
+        lastPoint = null;
+        const wp = worldPointFromMouse_locked(e.clientX, e.clientY);
+        if (wp) {
+          currentPoints.push(wp);
+          lastPoint = wp.clone();
+          createOrUpdatePreviewClassic();
+        }
+      }
+
+      function onPointerMove(e) {
+        // if not drawing, ignore (but pan/zoom still work via controls)
+        if (!isDrawing) return;
+        const wp = worldPointFromMouse_locked(e.clientX, e.clientY);
+        if (!wp) return;
+        if (!lastPoint || wp.distanceTo(lastPoint) >= minVertexDistance) {
+          currentPoints.push(wp);
+          lastPoint = wp.clone();
+          createOrUpdatePreviewClassic();
+        } else if (currentPoints.length > 0) {
+          currentPoints[currentPoints.length - 1] = wp.clone();
+          createOrUpdatePreviewClassic();
+        }
+      }
+
+      function onPointerUp(e) {
+        if (!isDrawing) return;
+        // only stop drawing on left button release
+        if (e.button !== 0) return;
+        isDrawing = false;
+        commitStrokeWorldToLocalAndSave();
+      }
+
+      // toggle pen-mode: when enabled, disable rotation but allow pan/zoom and remap buttons:
+      pencilToggle.addEventListener('change', () => {
+        if (pencilToggle.checked) {
+          saveControlsState();
+          // disable rotation
+          controls.enableRotate = false;
+          controls.enablePan = true;
+          controls.enableZoom = true;
+          // remap: RIGHT=PAN, MIDDLE=DOLLY, LEFT reserved for drawing (rotation disabled)
+          controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE; // rotation disabled, so left won't rotate
+          controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
+          controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+          renderer.domElement.style.cursor = 'crosshair';
+          drawPlanePoint = null;
+        } else {
+          // if we were drawing, commit
+          if (isDrawing) {
+            isDrawing = false;
+            commitStrokeWorldToLocalAndSave();
+          }
+          removePreviewClassic();
+          restoreControlsState();
+          renderer.domElement.style.cursor = '';
+        }
+      });
+
+      // attach pointer handlers
+      window.addEventListener('pointerdown', onPointerDown);
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('touchstart', (e) => {
+        if (e.touches[0]) onPointerDown({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY, button: 0 });
+      }, { passive: true });
+      window.addEventListener('touchmove', (e) => {
+        if (e.touches[0]) onPointerMove({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+      }, { passive: true });
+      window.addEventListener('touchend', onPointerUp);
+
+      clearBtn.addEventListener('click', () => {
+        for (let i = strokesGroup.children.length - 1; i >= 0; i--) {
+          const c = strokesGroup.children[i];
+          try { if (c.geometry) c.geometry.dispose(); } catch(e){}
+          try { if (c.material) c.material.dispose(); } catch(e){}
+          strokesGroup.remove(c);
+        }
+      });
+
+      pencilColor.addEventListener('input', () => {
+        if (previewClassic && previewClassic.material) previewClassic.material.color.set(pencilColor.value);
+      });
+      thickSlider.addEventListener('input', (ev) => {
+        thickVal.textContent = ev.target.value;
+      });
+
+      // tooltip on click (disabled when pen-mode active)
+      window.addEventListener('click', (event) => {
+        if (pencilToggle.checked) return;
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(sphereGroup.children);
+        if (intersects.length > 0) {
+          const data = intersects[0].object.userData;
+          tooltip.innerHTML = `Data: ${data.time}<br>MD: ${data.md}<br>Profondità: ${data.z} m`;
+          tooltip.style.left = `${event.clientX + 10}px`;
+          tooltip.style.top = `${event.clientY + 10}px`;
+          tooltip.style.opacity = 1;
+        } else {
+          tooltip.style.opacity = 0;
+        }
+      });
+
+      window.addEventListener('keydown', (ev) => {
+        if (ev.key === 'p' || ev.key === 'P') {
+          pencilToggle.checked = !pencilToggle.checked;
+          pencilToggle.dispatchEvent(new Event('change'));
+        }
+      });
+
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        strokesGroup.children.forEach(ch => {
+          if (ch.material && ch.material.resolution) {
+            ch.material.resolution.set(window.innerWidth, window.innerHeight);
+            ch.material.needsUpdate = true;
+          }
+        });
+      });
+
+      function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        // if pen-mode active and drawPlanePoint exists, keep plane aligned to camera (for pan/zoom)
+        if (pencilToggle.checked && drawPlanePoint) updateDrawPlaneFromCamera();
+        dirLight.position.copy(camera.position);
+        const camDir = new THREE.Vector3();
+        camera.getWorldDirection(camDir);
+        dirLight.target.position.copy(camera.position.clone().add(camDir.multiplyScalar(1)));
+        dirLight.target.updateMatrixWorld();
+        updateCubeFaceVisibility();
+        renderer.render(scene, camera);
+      }
+      animate();
+    } catch (err) {
+      console.error(err);
+    }
+  })();
+  </script>
+</body>
+</html>
