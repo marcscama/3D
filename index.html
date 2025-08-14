@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8"/>
+<title>Terremoti in 3D - MD > 0 - Gossip INGV-OV</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+  html,body { margin:0; padding:0; width:100%; height:100%; background:#000; overflow:hidden; }
+  #tooltip{
+    position:absolute;
+    padding:6px 10px;
+    background:rgba(0,0,0,0.8);
+    color:#fff;
+    font-family:sans-serif;
+    font-size:13px;
+    border-radius:6px;
+    pointer-events:none;
+    opacity:0;
+    transition:opacity 0.15s;
+    z-index:1000;
+  }
+  #sizeControl {
+    position: absolute;
+    left: 12px;
+    top: 12px;
+    z-index: 1001;
+    font-family: sans-serif;
+    color: #fff;
+    background: rgba(0,0,0,0.45);
+    padding: 8px 10px;
+    border-radius: 8px;
+    backdrop-filter: blur(4px);
+  }
+  #sizeControl label { display:block; font-size:13px; margin-bottom:6px; }
+  #sizeVal { font-weight:700; margin-left:8px; }
+  input[type="range"] { width:200px; }
+</style>
+</head>
+<body>
+  <div id="sizeControl">
+    <label>Size <span id="sizeVal">2.0</span></label>
+    <input id="sizeSlider" type="range" min="1" max="2" step="0.1" value="2"/>
+  </div>
+
+  <div id="tooltip"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.19.1/proj4.js"></script>
+
+  <script type="module">
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+  (async () => {
+    const CSV_URL = 'https://marcscama.github.io/3D/Terremoti-Gossip-2005-07-2025.csv';
+    const CRS_SRC = 'EPSG:4326', CRS_DST = 'EPSG:3857';
+    const tooltip = document.getElementById('tooltip');
+
+    // Slider UI
+    const slider = document.getElementById('sizeSlider');
+    const sizeVal = document.getElementById('sizeVal');
+    let currentExponent = parseFloat(slider.value);
+
+    function createGradientTexture(){
+      const canvas = document.createElement('canvas');
+      canvas.width = 1; canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      const gradient = ctx.createLinearGradient(0,0,0,256);
+      gradient.addColorStop(0, '#2e2d2d'); // scuro in alto
+      gradient.addColorStop(1, '#bfbfbf'); // chiaro in basso
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0,0,1,256);
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    const scene = new THREE.Scene();
+    scene.background = createGradientTexture();
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1e12);
+    camera.up.set(0,0,1);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = false; // ombre disattivate
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // Luci: ambient + directional (senza ombre)
+    const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+    scene.add(ambient);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.55);
+    dirLight.castShadow = false;
+    scene.add(dirLight);
+    scene.add(dirLight.target);
+
+    const sphereGroup = new THREE.Group();
+    scene.add(sphereGroup);
+
+    function parseCSV(text){
+      const lines = text.split(/\r?\n/).filter(l=>l.trim());
+      const headerIdx = lines.findIndex(l => l.startsWith('Longitude,Latitude,Depth,MD,Time'));
+      if(headerIdx < 0) throw new Error('Header CSV non trovato');
+      const header = lines[headerIdx].split(',').map(h=>h.trim());
+      const rows = [];
+      for(let i = headerIdx + 1; i < lines.length; i++){
+        const cols = lines[i].split(',').map(c=>c.trim());
+        if(cols.length < header.length) continue;
+        const obj = {};
+        header.forEach((h,idx)=> obj[h] = cols[idx]);
+        rows.push(obj);
+      }
+      return rows;
+    }
+
+    try {
+      const resp = await fetch(CSV_URL);
+      if(!resp.ok) throw new Error('Fetch fallito: ' + resp.status);
+      const rows = parseCSV(await resp.text());
+
+      const pts = rows.map(r => {
+        const lon = parseFloat(r.Longitude), lat = parseFloat(r.Latitude);
+        const depth = parseFloat(r.Depth);
+        const z = Number.isFinite(depth) ? depth * -1000 : NaN;
+        const md = parseFloat(r.MD);
+        return { lon, lat, z, md, time: r.Time };
+      }).filter(p => Number.isFinite(p.lon) && Number.isFinite(p.lat) && Number.isFinite(p.z) && Number.isFinite(p.md));
+
+      // calcolo coordinate proiettate
+      const coords = new Float64Array(pts.length * 3);
+      for(let i=0;i<pts.length;i++){
+        const [x,y] = proj4(CRS_SRC, CRS_DST, [pts[i].lon, pts[i].lat]);
+        coords[i*3] = x; coords[i*3+1] = y; coords[i*3+2] = pts[i].z;
+      }
+
+      // bounding box e parametri
+      const bbox = new THREE.Box3();
+      for(let i=0;i<pts.length;i++){
+        bbox.expandByPoint(new THREE.Vector3(coords[i*3], coords[i*3+1], coords[i*3+2]));
+      }
+      const center = bbox.getCenter(new THREE.Vector3());
+      const sizeLen = bbox.getSize(new THREE.Vector3()).length();
+      const scaleFactor = Math.max(1, sizeLen * 0.00035);
+
+      // z min/max per colore
+      const zvals = [];
+      for(let i=0;i<pts.length;i++) zvals.push(coords[i*3+2]);
+      const zmin = Math.min(...zvals), zmax = Math.max(...zvals);
+
+      function zToRainbow(z){
+        const t = (z - zmin) / (zmax - zmin || 1);
+        const hue = (1 - t) * 300;
+        const c = new THREE.Color();
+        c.setHSL((hue % 360) / 360, 0.95, THREE.MathUtils.clamp(0.65 - 0.3 * t, 0.2, 0.8));
+        return c;
+      }
+
+      // limiti radius
+      const sphereMinRadius = Math.max(0.2, scaleFactor * 0.001);
+      const sphereMaxRadius = Math.max(500, scaleFactor * 0.10);
+
+      // Geometria unità — la usiamo per tutti i mesh e modifichiamo scale
+      const unitGeom = new THREE.SphereGeometry(1, 32, 32);
+
+      // Creo i mesh con geometria unità e li scala alla dimensione iniziale usando currentExponent
+      for(let i=0;i<pts.length;i++){
+        const md = pts[i].md;
+        const color = zToRainbow(coords[i*3+2]);
+        const mat = new THREE.MeshPhysicalMaterial({
+          color: color,
+          emissive: color.clone().multiplyScalar(0.2),
+          emissiveIntensity: 0.2,
+          metalness: 0.1,
+          roughness: 0.3,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.1
+        });
+        const mesh = new THREE.Mesh(unitGeom, mat);
+        mesh.position.set(coords[i*3] - center.x, coords[i*3+1] - center.y, coords[i*3+2] - center.z);
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        mesh.userData = { md: md, time: pts[i].time, z: pts[i].z };
+        sphereGroup.add(mesh);
+      }
+
+      // posiziona il gruppo al centro geografico
+      sphereGroup.position.copy(center);
+
+      //
+      // --- INIZIO CODICE AGGIUNTO: cubo di 10km (solo edges) + tacchette ogni -2000m + label NERO trasparente RUOTATE 180° verticalmente ---
+      //
+      const cubeSide = 10000; // 10 km
+      const half = cubeSide * 0.5;
+      const cubeCenterWorld = new THREE.Vector3(1572000, 4985800, -5000); // centro richiesto
+
+      const cx = cubeCenterWorld.x, cy = cubeCenterWorld.y, cz = cubeCenterWorld.z;
+      const corners = [
+        new THREE.Vector3(cx - half, cy - half, cz - half), // 0 bottom -x -y
+        new THREE.Vector3(cx + half, cy - half, cz - half), // 1
+        new THREE.Vector3(cx + half, cy + half, cz - half), // 2
+        new THREE.Vector3(cx - half, cy + half, cz - half), // 3
+        new THREE.Vector3(cx - half, cy - half, cz + half), // 4 top
+        new THREE.Vector3(cx + half, cy - half, cz + half), // 5
+        new THREE.Vector3(cx + half, cy + half, cz + half), // 6
+        new THREE.Vector3(cx - half, cy + half, cz + half)  // 7
+      ];
+
+      const edgePairs = [
+        [0,1],[1,2],[2,3],[3,0], // bottom face edges
+        [4,5],[5,6],[6,7],[7,4], // top face edges
+        [0,4],[1,5],[2,6],[3,7]  // vertical edges
+      ];
+
+      // edges: black and thicker (linewidth may be ignored by some platforms)
+      const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 1.0, linewidth: 4 });
+      const cubeEdgesGroup = new THREE.Group();
+      const edgeLines = [];
+      for (let i = 0; i < edgePairs.length; i++) {
+        const [a,b] = edgePairs[i];
+        const geom = new THREE.BufferGeometry().setFromPoints([ corners[a], corners[b] ]);
+        const line = new THREE.Line(geom, edgeMaterial.clone());
+        cubeEdgesGroup.add(line);
+        edgeLines.push({ line, pair: [a,b] });
+      }
+      scene.add(cubeEdgesGroup);
+
+      // mapping face->edges
+      const faces = {
+        px: (v) => v.x === cx + half,
+        nx: (v) => v.x === cx - half,
+        py: (v) => v.y === cy + half,
+        ny: (v) => v.y === cy - half,
+        pz: (v) => v.z === cz + half,
+        nz: (v) => v.z === cz - half
+      };
+      const faceEdgeMap = {};
+      for (let fname of Object.keys(faces)) {
+        faceEdgeMap[fname] = [];
+        for (let ei=0; ei<edgeLines.length; ei++) {
+          const pair = edgeLines[ei].pair;
+          const va = corners[pair[0]], vb = corners[pair[1]];
+          if (faces[fname](va) && faces[fname](vb)) faceEdgeMap[fname].push(ei);
+        }
+      }
+
+      function updateCubeFaceVisibility() {
+        const camVec = camera.position.clone().sub(cubeCenterWorld).normalize();
+        const normals = {
+          px: new THREE.Vector3(1,0,0),
+          nx: new THREE.Vector3(-1,0,0),
+          py: new THREE.Vector3(0,1,0),
+          ny: new THREE.Vector3(0,-1,0),
+          pz: new THREE.Vector3(0,0,1),
+          nz: new THREE.Vector3(0,0,-1)
+        };
+        let bestFace = null;
+        let bestDot = -Infinity;
+        for (let k in normals) {
+          const d = normals[k].dot(camVec);
+          if (d > bestDot) { bestDot = d; bestFace = k; }
+        }
+        for (let ei = 0; ei < edgeLines.length; ei++) {
+          const line = edgeLines[ei].line;
+          const shouldHide = faceEdgeMap[bestFace].includes(ei);
+          line.visible = !shouldHide;
+        }
+        tickObjects.forEach(t => {
+          const hide = faceEdgeMap[bestFace].includes(t.edgeIdx);
+          t.line.visible = !hide;
+          t.labelMesh.visible = !hide;
+        });
+      }
+
+      // ticks every -2000m on vertical edges (indices 8..11)
+      const verticalEdgeIndices = [8,9,10,11];
+      const depthTicks = [0, -2000, -4000, -6000, -8000, -10000];
+      const tickObjects = []; // { edgeIdx, line, labelMesh }
+      const tickMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 4 });
+
+      // create label plane with BLACK text on TRANSPARENT background (mesh, not sprite)
+      // IMPORTANT: label plane is rotated so the text is flipped 180° vertically
+      function createLabelMesh(text, scaleWorld) {
+        const fontSize = 40; // moderate size (previously reduced)
+        const padding = 12;
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+
+        ctx.font = `${fontSize}px sans-serif`;
+        const metrics = ctx.measureText(text);
+        const w = Math.ceil(metrics.width) + padding * 2;
+        const h = Math.ceil(fontSize * 1.2) + padding * 2;
+
+        canvas.width = w;
+        canvas.height = h;
+
+        // transparent background and black text
+        ctx.clearRect(0,0,w,h);
+        ctx.font = `${fontSize}px sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#000000'; // TEXT BLACK (no background)
+        ctx.fillText(text, padding, h / 2);
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.needsUpdate = true;
+        tex.magFilter = THREE.LinearFilter;
+        tex.minFilter = THREE.LinearFilter;
+
+        const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
+        const aspect = w / h;
+        const planeGeom = new THREE.PlaneGeometry(scaleWorld * aspect, scaleWorld);
+        const mesh = new THREE.Mesh(planeGeom, mat);
+        mesh.renderOrder = 999;
+        // rotate so the plane lies on the X-Z plane (normal along +Y)
+        // then flip 180° around X so the label is upside-down relative to previous orientation,
+        // i.e. the "bottom" of the text points toward negative Z (deeper values).
+        mesh.rotation.x = Math.PI / 2; // flipped compared to previous -Math.PI/2
+        return mesh;
+      }
+
+      verticalEdgeIndices.forEach((edgeIdx) => {
+        const pair = edgePairs[edgeIdx];
+        const top = corners[pair[1]];
+        const bottom = corners[pair[0]];
+        // outward direction in XY
+        const edgeMid = new THREE.Vector3().addVectors(top, bottom).multiplyScalar(0.5);
+        const outDir = new THREE.Vector3(edgeMid.x - cx, edgeMid.y - cy, 0).normalize();
+        if (outDir.length() === 0) outDir.set(1,0,0);
+        const tickLen = cubeSide * 0.03; // length of tick starting at edge going outward
+        const labelOffset = cubeSide * 0.06; // offset from tick end to label
+        const labelScaleWorld = cubeSide * 0.06; // label size
+
+        const topZ = cz + half, bottomZ = cz - half;
+        depthTicks.forEach((d) => {
+          // compute tt in [0..1] from top->bottom
+          const tt = (topZ - d) / (topZ - bottomZ);
+          const pos = new THREE.Vector3().lerpVectors(top, bottom, tt);
+          // tick: start exactly on edge (pos), end outward
+          const start = pos.clone();
+          const end = pos.clone().add(outDir.clone().multiplyScalar(tickLen));
+          const geom = new THREE.BufferGeometry().setFromPoints([ start, end ]);
+          const tickLine = new THREE.Line(geom, tickMaterial.clone());
+          scene.add(tickLine);
+
+          // label plane positioned slightly beyond tick end
+          const labelPos = end.clone().add(outDir.clone().multiplyScalar(labelOffset));
+          const labelMesh = createLabelMesh(`${d} m`, labelScaleWorld);
+          labelMesh.position.copy(labelPos);
+          // label is fixed orientation (no lookAt)
+          scene.add(labelMesh);
+
+          tickObjects.push({ edgeIdx, line: tickLine, labelMesh });
+        });
+      });
+
+      // initial face visibility
+      updateCubeFaceVisibility();
+
+      //
+      // --- FINE CODICE AGGIUNTO ---
+      //
+
+      // camera setup
+      const dist = Math.max(sizeLen * 0.8, 3000);
+      camera.position.set(center.x + dist*0.6, center.y + dist*0.25, center.z + dist*0.55);
+      camera.near = Math.max(0.1, dist * 0.00001);
+      camera.far = Math.max(1e9, dist * 300, sizeLen * 300);
+      camera.updateProjectionMatrix();
+      controls.target.copy(center);
+      controls.update();
+
+      // funzione per calcolare raggio e applicare scale a tutti i mesh
+      function computeRadius(md, exponent){
+        const base = Math.pow(md, exponent || 1);
+        let r = base * scaleFactor;
+        r = Math.min(Math.max(r, sphereMinRadius), sphereMaxRadius);
+        return r;
+      }
+      function updateSphereSizes(exponent){
+        for(let i=0; i < sphereGroup.children.length; i++){
+          const m = sphereGroup.children[i];
+          const md = m.userData.md;
+          const r = computeRadius(md, exponent);
+          m.scale.setScalar(r);
+        }
+      }
+
+      // inizializza dimensioni col valore corrente dello slider
+      updateSphereSizes(currentExponent);
+
+      // slider handling: cambia esponente in tempo reale
+      slider.addEventListener('input', (ev) => {
+        const val = parseFloat(ev.target.value);
+        currentExponent = val;
+        sizeVal.textContent = val.toFixed(1);
+        updateSphereSizes(currentExponent);
+      });
+
+      // resize window
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      // tooltip on click
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2();
+      window.addEventListener('click', (event) => {
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(sphereGroup.children);
+        if(intersects.length > 0){
+          const data = intersects[0].object.userData;
+          tooltip.innerHTML = `Data: ${data.time}<br>MD: ${data.md}<br>Profondità: ${data.z} m`;
+          tooltip.style.left = `${event.clientX + 10}px`;
+          tooltip.style.top  = `${event.clientY + 10}px`;
+          tooltip.style.opacity = 1;
+        } else {
+          tooltip.style.opacity = 0;
+        }
+      });
+
+      // animate loop
+      function animate(){
+        requestAnimationFrame(animate);
+        controls.update();
+
+        // aggiorna luce direzionale
+        dirLight.position.copy(camera.position);
+        const camDir = new THREE.Vector3();
+        camera.getWorldDirection(camDir);
+        dirLight.target.position.copy(camera.position.clone().add(camDir.multiplyScalar(1)));
+        dirLight.target.updateMatrixWorld();
+
+        // update which cube face is front and hide its edges/ticks/labels
+        updateCubeFaceVisibility();
+
+        renderer.render(scene, camera);
+      }
+      animate();
+
+    } catch(err){
+      console.error(err);
+    }
+  })();
+  </script>
+</body>
+</html>
