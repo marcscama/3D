@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="utf-8"/>
-<title>Terremoti in 3D — Visualizzatore Sismico ipocentri</title>
+<title>Visualizzatore Terremoti in 3D </title>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <style>
 html,body{margin:0;height:100%;background:#3a3a3a;overflow:hidden}
@@ -160,7 +160,7 @@ input[type=range]{width:100%}
 
   <!-- CSV upload -->
   <div class="section">
-    <span class="sec-title">Dati:epsg 4326</span>
+    <span class="sec-title">Dati: epsg 4326</span>
     <button id="csvBtn">📂 Carica file CSV</button>
     <input id="csvInput" type="file" accept=".csv" style="display:none">
     <div id="csvStatus" class="thin">Nessun file caricato</div>
@@ -201,8 +201,8 @@ input[type=range]{width:100%}
       </div>
       <div class="dual-wrap">
         <div class="sl-track"><div class="sl-fill" id="depthFill"></div></div>
-        <input type="range" id="depthMin" min="0" max="10000" step="100" value="0">
-        <input type="range" id="depthMax" min="0" max="10000" step="100" value="10000">
+        <input type="range" id="depthMin" min="0" max="10000" step="10" value="0">
+        <input type="range" id="depthMax" min="0" max="10000" step="10" value="10000">
       </div>
     </div>
 
