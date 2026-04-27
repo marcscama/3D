@@ -1,0 +1,1727 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8"/>
+<title>Terremoti in 3D — Visualizzatore Sismico ipocentri</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+html,body{margin:0;height:100%;background:#3a3a3a;overflow:hidden}
+
+/* ── Shared panel ─────────────────────────────────────── */
+.uiBox{
+  position:absolute;z-index:1001;
+  font-family:sans-serif;color:#fff;
+  background:rgba(8,10,18,.62);
+  padding:10px 13px;border-radius:10px;
+  backdrop-filter:blur(10px);
+  border:1px solid rgba(255,255,255,.11);
+  box-shadow:0 4px 24px rgba(0,0,0,.55);
+}
+
+/* ── Left filter panel ───────────────────────────────── */
+#filterPanel{top:12px;left:12px;width:278px}
+#csvBtn{white-space:nowrap}
+.panel-title{
+  display:block;font-size:14px;font-weight:700;
+  color:#fff;margin-bottom:10px;
+  border-bottom:1px solid rgba(255,255,255,.13);
+  padding-bottom:7px;letter-spacing:.2px;
+}
+.section{margin-bottom:10px}
+.sec-title{
+  display:block;font-size:10px;font-weight:700;
+  color:#6aabdc;text-transform:uppercase;
+  letter-spacing:.7px;margin-bottom:6px;
+}
+
+/* CSV button */
+#csvBtn{
+  width:100%;padding:7px 10px;border-radius:6px;
+  border:1px solid rgba(80,160,255,.4);
+  background:rgba(40,100,200,.22);
+  color:#9ef;font-size:13px;cursor:pointer;
+  transition:background .18s;
+}
+#csvBtn:hover{background:rgba(40,100,200,.42)}
+#csvStatus{font-size:11px;color:#78a;margin-top:5px;word-break:break-all;line-height:1.5}
+
+/* Date pickers */
+.date-row{display:flex;gap:8px;margin-top:3px}
+.date-row>div{flex:1}
+.date-row span{display:block;font-size:10px;color:#6aabdc;margin-bottom:3px;font-weight:600}
+.date-row input[type=date]{
+  width:100%;box-sizing:border-box;padding:4px 6px;
+  background:rgba(255,255,255,.09);
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:5px;color:#fff;font-size:12px;
+  color-scheme:dark;outline:none;
+  transition:border-color .15s;
+}
+.date-row input[type=date]:focus{border-color:#4ab4f5}
+
+/* Dual range slider ─────────────── */
+.slider-val-row{
+  display:flex;justify-content:space-between;
+  font-size:11px;color:#ccc;margin-bottom:4px;
+}
+.dual-wrap{position:relative;height:26px;margin-bottom:6px}
+.sl-track{
+  position:absolute;top:50%;transform:translateY(-50%);
+  width:100%;height:4px;background:rgba(255,255,255,.13);border-radius:2px;
+}
+.sl-fill{
+  position:absolute;height:100%;background:#4ab4f5;
+  border-radius:2px;left:0;width:100%;
+}
+.dual-wrap input[type=range]{
+  position:absolute;top:50%;transform:translateY(-50%);
+  width:100%;pointer-events:none;
+  -webkit-appearance:none;appearance:none;
+  height:4px;background:transparent;outline:none;margin:0;padding:0;
+}
+.dual-wrap input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;pointer-events:all;
+  width:16px;height:16px;border-radius:50%;
+  background:#4ab4f5;border:2px solid #e8f4ff;
+  cursor:pointer;box-shadow:0 1px 5px rgba(0,0,0,.7);
+  transition:transform .1s;
+}
+.dual-wrap input[type=range]::-webkit-slider-thumb:active{transform:scale(1.25)}
+.dual-wrap input[type=range]::-moz-range-thumb{
+  pointer-events:all;width:16px;height:16px;
+  border-radius:50%;background:#4ab4f5;
+  border:2px solid #e8f4ff;cursor:pointer;
+}
+
+/* Count label */
+#countLabel{
+  font-size:12px;color:#4df;font-weight:600;
+  background:rgba(0,70,110,.35);padding:4px 8px;
+  border-radius:5px;text-align:center;margin-top:4px;
+}
+
+/* ── Bottom-left tools panel ─────────────────────────── */
+#toolsPanel{bottom:12px;left:12px;width:278px}
+#toolsPanel .row{display:flex;gap:8px;align-items:center}
+#toolsPanel button{
+  margin-top:8px;padding:6px 10px;border-radius:6px;
+  border:0;background:#1e1e28;color:#fff;cursor:pointer;
+  font-size:12px;transition:background .15s;
+}
+#toolsPanel button:hover{background:#2c2c3e}
+#toolsPanel input[type=color]{
+  width:36px;height:28px;padding:0;border:0;
+  background:transparent;cursor:pointer;
+}
+.collapseBtn{
+  position:absolute;top:8px;right:8px;
+  width:24px;height:24px;border:0;border-radius:5px;
+  background:rgba(255,255,255,.10);color:#fff;cursor:pointer;
+  font-size:14px;line-height:1;padding:0;
+  display:flex;align-items:center;justify-content:center;
+  transition:background .15s;
+}
+.collapseBtn:hover{background:rgba(255,255,255,.22)}
+.uiBox.collapsed .collapsible{display:none}
+.uiBox.collapsed{padding:6px 36px 6px 13px;width:auto !important}
+button.active{outline:2px solid #fff}
+label{display:block;font-size:13px;margin-bottom:5px}
+input[type=range]{width:100%}
+.thin{font-size:11px;color:#777;margin-top:5px}
+
+/* ── Tooltip ─────────────────────────────────────────── */
+#tooltip{
+  position:absolute;padding:8px 13px;
+  background:rgba(4,8,18,.92);color:#fff;
+  font-family:monospace;font-size:12px;
+  border-radius:8px;pointer-events:none;
+  opacity:0;transition:opacity .15s;z-index:1000;
+  border:1px solid rgba(74,180,245,.35);
+  line-height:1.85;min-width:168px;
+  box-shadow:0 4px 16px rgba(0,0,0,.7);
+}
+#tooltip .tt-title{font-size:14px;font-weight:700;color:#4df;margin-bottom:2px}
+
+/* ── Eraser cursor ───────────────────────────────────── */
+#eraserCursor{
+  position:absolute;width:64px;height:64px;border-radius:50%;
+  border:2px dashed rgba(255,255,255,.9);pointer-events:none;
+  transform:translate(-50%,-50%);z-index:2000;display:none;
+}
+</style>
+</head>
+<body>
+
+<!-- ══════════ LEFT-TOP: Filter Panel ══════════ -->
+<div id="filterPanel" class="uiBox">
+  <button class="collapseBtn" data-target="filterPanel" title="Nascondi">−</button>
+  <span class="panel-title">Terremoti 3D</span>
+  <div class="collapsible">
+
+  <!-- CSV upload -->
+  <div class="section">
+    <span class="sec-title">Dati:epsg 4326</span>
+    <button id="csvBtn">📂 Carica file CSV</button>
+    <input id="csvInput" type="file" accept=".csv" style="display:none">
+    <div id="csvStatus" class="thin">Nessun file caricato</div>
+  </div>
+
+  <!-- Filters (revealed after load) -->
+  <div id="filtersSection" style="display:none">
+
+    <!-- Date range – PRIMARY filter -->
+    <div class="section">
+      <span class="sec-title">📅 Intervallo Temporale</span>
+      <div class="date-row">
+        <div><span>Dal</span><input type="date" id="dateStart"></div>
+        <div><span>Al</span><input type="date" id="dateEnd"></div>
+      </div>
+    </div>
+
+    <!-- MD dual range -->
+    <div class="section">
+      <span class="sec-title">Magnitudo MD</span>
+      <div class="slider-val-row">
+        <span id="mdMinLbl">0.00</span>
+        <span id="mdMaxLbl">6.00</span>
+      </div>
+      <div class="dual-wrap">
+        <div class="sl-track"><div class="sl-fill" id="mdFill"></div></div>
+        <input type="range" id="mdMin" min="0" max="6" step="0.05" value="0">
+        <input type="range" id="mdMax" min="0" max="6" step="0.05" value="6">
+      </div>
+    </div>
+
+    <!-- Depth dual range -->
+    <div class="section">
+      <span class="sec-title">Profondità (m)</span>
+      <div class="slider-val-row">
+        <span id="depthMinLbl">0 m</span>
+        <span id="depthMaxLbl">10000 m</span>
+      </div>
+      <div class="dual-wrap">
+        <div class="sl-track"><div class="sl-fill" id="depthFill"></div></div>
+        <input type="range" id="depthMin" min="0" max="10000" step="100" value="0">
+        <input type="range" id="depthMax" min="0" max="10000" step="100" value="10000">
+      </div>
+    </div>
+
+    <div id="countLabel">Visibili: — / —</div>
+  </div>
+  </div>
+</div>
+
+<!-- ══════════ BOTTOM-LEFT: Tools (size + pencil) ══════════ -->
+<div id="toolsPanel" class="uiBox">
+  <button class="collapseBtn" data-target="toolsPanel" title="Nascondi">−</button>
+  <span class="panel-title">🛠️ Strumenti</span>
+  <div class="collapsible">
+    <div class="section">
+      <label>Dimensione sfere <span id="sizeVal">2.0</span></label>
+      <input id="sizeSlider" type="range" min="1" max="2" step="0.1" value="2"/>
+    </div>
+    <div class="section">
+      <label><input id="pencilToggle" type="checkbox"> Abilita penna</label>
+      <div class="row">
+        <div style="flex:1">
+          <label>Colore:</label>
+          <input id="pencilColor" type="color" value="#ff0000">
+        </div>
+        <div style="flex:1.6">
+          <label>Spessore: <span id="thickVal">6</span></label>
+          <input id="thickSlider" type="range" min="1" max="100" step="1" value="6"/>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="clearBtn">Cancella tutto</button>
+        <button id="eraseBtn">Gomma</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+<div id="eraserCursor"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.172.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.172.0/examples/jsm/",
+    "meshline": "https://esm.sh/meshline@3.3.1?external=three&deps=three@0.172.0"
+  }
+}
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.19.1/proj4.js"></script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls }    from 'three/addons/controls/OrbitControls.js';
+import { Line2 }            from 'three/addons/lines/Line2.js';
+import { LineMaterial }     from 'three/addons/lines/LineMaterial.js';
+import { LineGeometry }     from 'three/addons/lines/LineGeometry.js';
+import { RoomEnvironment }  from 'three/addons/environments/RoomEnvironment.js';
+import { MeshLineGeometry, MeshLineMaterial, raycast as meshLineRaycast } from 'meshline';
+
+(async () => {
+
+// ── UI refs ───────────────────────────────────────────────────────────────
+const csvBtn         = document.getElementById('csvBtn');
+const csvInput       = document.getElementById('csvInput');
+const csvStatus      = document.getElementById('csvStatus');
+const filtersSection = document.getElementById('filtersSection');
+const dateStartEl    = document.getElementById('dateStart');
+const dateEndEl      = document.getElementById('dateEnd');
+const mdMinEl        = document.getElementById('mdMin');
+const mdMaxEl        = document.getElementById('mdMax');
+const mdMinLbl       = document.getElementById('mdMinLbl');
+const mdMaxLbl       = document.getElementById('mdMaxLbl');
+const mdFill         = document.getElementById('mdFill');
+const depthMinEl     = document.getElementById('depthMin');
+const depthMaxEl     = document.getElementById('depthMax');
+const depthMinLbl    = document.getElementById('depthMinLbl');
+const depthMaxLbl    = document.getElementById('depthMaxLbl');
+const depthFill      = document.getElementById('depthFill');
+const countLabel     = document.getElementById('countLabel');
+const slider         = document.getElementById('sizeSlider');
+const sizeVal        = document.getElementById('sizeVal');
+const pencilToggle   = document.getElementById('pencilToggle');
+const pencilColor    = document.getElementById('pencilColor');
+const thickSlider    = document.getElementById('thickSlider');
+const thickVal       = document.getElementById('thickVal');
+const clearBtn       = document.getElementById('clearBtn');
+const eraseBtn       = document.getElementById('eraseBtn');
+const tooltip        = document.getElementById('tooltip');
+const eraserCursor   = document.getElementById('eraserCursor');
+
+// ── Scene ─────────────────────────────────────────────────────────────────
+function gradientBG() {
+  // Light grey at top → dark grey at bottom
+  const c = document.createElement('canvas'); c.width = 1; c.height = 512;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0,0,0,512);
+  g.addColorStop(0,   '#d0d4d8');
+  g.addColorStop(0.45,'#8a8e94');
+  g.addColorStop(1,   '#2a2c30');
+  ctx.fillStyle = g; ctx.fillRect(0,0,1,512);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const scene    = new THREE.Scene(); scene.background = gradientBG();
+const camera   = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 1e12);
+camera.up.set(0, 0, 1);
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+// No environment map / ambient: single headlight that follows the camera.
+// renderer.toneMappingExposure stays moderate so spheres aren't washed out.
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// Single directional light that follows the camera (set in animate()).
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.15);
+dirLight.castShadow = false;
+scene.add(dirLight); scene.add(dirLight.target);
+
+const sphereGroup = new THREE.Group(); scene.add(sphereGroup);
+const strokesGroup = new THREE.Group(); scene.add(strokesGroup);
+
+// ── Shared unit sphere geometry (all spheres share it) ────────────────────
+const unitGeo = new THREE.SphereGeometry(1, 48, 48);
+
+// ── Selection halo ────────────────────────────────────────────────────────
+// Attached as child of the selected sphere mesh so it follows automatically.
+const haloMat = new THREE.MeshBasicMaterial({
+  color: 0xffffff, wireframe: true,
+  transparent: true, opacity: 0.10, depthWrite: false
+});
+const selectionHalo = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 20), haloMat);
+selectionHalo.visible = false;
+// Not added to scene yet – will be parented to a sphere on click.
+
+let selectedSphere = null;
+
+// ── Data state ────────────────────────────────────────────────────────────
+let allPoints   = [];  // { x, y, z, md, depthM, date, time }
+let sphereMeshes= [];  // parallel array of THREE.Mesh
+let bbox = null, center = null, sizeLen = 1, scaleFactor = 1;
+let currentExponent = parseFloat(slider.value);
+const MD_PEN_THRESHOLD = 2.0;
+
+// ── Filter state ──────────────────────────────────────────────────────────
+let filterDateStart = null; // Date | null
+let filterDateEnd   = null; // Date | null
+let filterMDMin     = 0,  filterMDMax     = 6;
+let filterDepthMin  = 0,  filterDepthMax  = 10000; // metres
+
+// ── Drawing state ─────────────────────────────────────────────────────────
+const raycaster = new THREE.Raycaster();
+let isDrawing = false;
+const drawPlane = new THREE.Plane(new THREE.Vector3(0,0,1), 0);
+let drawPlanePoint = null;
+let SNAP_DISTANCE = 120, ERASER_DISTANCE = 120, minVertexDistance = 1;
+
+// Sphere-snap pen state: list of clicked sphere centres (in world coords)
+// and visual marker meshes for each anchor. Stroke is committed when user
+// presses Enter, double-clicks, or toggles pen off.
+// (Stato penna freehand è dichiarato più in basso, vicino al modulo MeshLine)
+
+// ── Dual slider helper ────────────────────────────────────────────────────
+function syncDualSlider(minEl, maxEl, fillEl, minLbl, maxLbl, fmt) {
+  let lo = parseFloat(minEl.value);
+  let hi = parseFloat(maxEl.value);
+  if (lo > hi) {
+    if (document.activeElement === minEl) { minEl.value = hi; lo = hi; }
+    else { maxEl.value = lo; hi = lo; }
+  }
+  const span = parseFloat(minEl.max) - parseFloat(minEl.min);
+  const base  = parseFloat(minEl.min);
+  fillEl.style.left  = ((lo - base) / span * 100) + '%';
+  fillEl.style.width = ((hi - lo)   / span * 100) + '%';
+  minLbl.textContent = fmt(lo);
+  maxLbl.textContent = fmt(hi);
+  return { lo, hi };
+}
+
+// Wire up dual sliders
+[mdMinEl, mdMaxEl].forEach(el => el.addEventListener('input', () => {
+  const { lo, hi } = syncDualSlider(mdMinEl, mdMaxEl, mdFill, mdMinLbl, mdMaxLbl, v => v.toFixed(2));
+  filterMDMin = lo; filterMDMax = hi; applyFilters();
+}));
+[depthMinEl, depthMaxEl].forEach(el => el.addEventListener('input', () => {
+  const { lo, hi } = syncDualSlider(depthMinEl, depthMaxEl, depthFill, depthMinLbl, depthMaxLbl, v => v + ' m');
+  filterDepthMin = lo; filterDepthMax = hi; applyFilters();
+}));
+
+// Date pickers
+dateStartEl.addEventListener('change', () => {
+  filterDateStart = dateStartEl.value ? new Date(dateStartEl.value) : null;
+  applyFilters();
+});
+dateEndEl.addEventListener('change', () => {
+  if (dateEndEl.value) {
+    filterDateEnd = new Date(dateEndEl.value);
+    filterDateEnd.setHours(23, 59, 59, 999);
+  } else {
+    filterDateEnd = null;
+  }
+  applyFilters();
+});
+
+// ── Filter logic ──────────────────────────────────────────────────────────
+function applyFilters() {
+  if (!allPoints.length) return;
+  let visible = 0;
+  const total = allPoints.length;
+  for (let i = 0; i < total; i++) {
+    const p    = allPoints[i];
+    const mesh = sphereMeshes[i];
+    // 1. Date (primary base)
+    let show = true;
+    if (filterDateStart && p.date < filterDateStart) show = false;
+    if (show && filterDateEnd && p.date > filterDateEnd) show = false;
+    // 2. MD (secondary)
+    if (show && (p.md < filterMDMin || p.md > filterMDMax)) show = false;
+    // 3. Depth (secondary)
+    if (show && (p.depthM < filterDepthMin || p.depthM > filterDepthMax)) show = false;
+
+    mesh.visible = show;
+    if (show) visible++;
+  }
+  countLabel.textContent = `Visibili: ${visible.toLocaleString('it')} / ${total.toLocaleString('it')}`;
+
+  // If selected sphere became hidden, deselect it
+  if (selectedSphere && !selectedSphere.visible) deselectSphere();
+}
+
+// ── CSV parsing ───────────────────────────────────────────────────────────
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const hi    = lines.findIndex(l => /longitude/i.test(l) && /latitude/i.test(l));
+  if (hi < 0) throw new Error('Header non trovato — il CSV deve avere le colonne longitude, latitude, depth, md, time');
+  const header = lines[hi].split(',').map(h => h.trim());
+  const idx = {};
+  header.forEach((h, i) => idx[h.toLowerCase()] = i);
+  const rows = [];
+  for (let i = hi + 1; i < lines.length; i++) {
+    const cols = lines[i].split(',').map(c => c.trim());
+    if (cols.length < header.length) continue;
+    rows.push(cols);
+  }
+  return rows.map(c => ({
+    Longitude: parseFloat(c[idx['longitude']]),
+    Latitude:  parseFloat(c[idx['latitude']]),
+    Depth:     parseFloat(c[idx['depth']]),   // km in input
+    MD:        parseFloat(c[idx['md']]),
+    Time:      c[idx['time']] || ''
+  })).filter(r =>
+    Number.isFinite(r.Longitude) && Number.isFinite(r.Latitude) &&
+    Number.isFinite(r.Depth)     && Number.isFinite(r.MD)
+  );
+}
+
+// ── Radius computation ────────────────────────────────────────────────────
+function computeRadius(md, exponent) {
+  const base = Math.pow(Math.max(md, 0.01), exponent || 1);
+  let r = base * scaleFactor;
+  r = Math.min(
+    Math.max(r, Math.max(0.2, scaleFactor * 0.001)),
+    Math.max(500, scaleFactor * 0.10)
+  );
+  return r;
+}
+
+// ── Clear all sphere meshes ───────────────────────────────────────────────
+function clearSpheres() {
+  deselectSphere();
+  tooltip.style.opacity = 0;
+  // Only dispose materials (geometry is shared)
+  sphereMeshes.forEach(m => m.material.dispose());
+  sphereGroup.clear();
+  sphereMeshes = [];
+  allPoints    = [];
+}
+
+// ── Build scene from parsed rows ──────────────────────────────────────────
+function buildScene(rows) {
+  clearSpheres();
+
+  const pts = rows.map(r => {
+    const [x, y] = proj4('EPSG:4326', 'EPSG:3857', [r.Longitude, r.Latitude]);
+    const depthM = r.Depth * 1000; // km → metres (positive value)
+    return {
+      x, y,
+      z:      -depthM,   // Three.js: negative Z = depth below surface
+      md:      r.MD,
+      depthM,            // positive metres, for filtering & tooltip
+      date:    new Date(r.Time),
+      time:    r.Time
+    };
+  });
+
+  if (!pts.length) return;
+
+  // Bounding box — avoid Math.min/max spread with large arrays
+  bbox   = new THREE.Box3();
+  pts.forEach(p => bbox.expandByPoint(new THREE.Vector3(p.x, p.y, p.z)));
+  center      = bbox.getCenter(new THREE.Vector3());
+  sizeLen     = bbox.getSize(new THREE.Vector3()).length();
+  scaleFactor = Math.max(1, sizeLen * 0.00035);
+
+  // Z range for rainbow colouring
+  let zmin = Infinity, zmax = -Infinity;
+  for (const p of pts) {
+    if (p.z < zmin) zmin = p.z;
+    if (p.z > zmax) zmax = p.z;
+  }
+  function zToRainbow(z) {
+    const t   = (z - zmin) / (zmax - zmin || 1);
+    const hue = (1 - t) * 300;
+    const c   = new THREE.Color();
+    c.setHSL((hue % 360) / 360, 0.95, THREE.MathUtils.clamp(0.65 - 0.3 * t, 0.2, 0.8));
+    return c;
+  }
+
+  for (const p of pts) {
+    const col = zToRainbow(p.z);
+    // Solid spheres with normal shading — no transmission, no soap-bubble look.
+    const mat = new THREE.MeshStandardMaterial({
+      color:             col,
+      emissive:          col.clone().multiplyScalar(0.20),
+      emissiveIntensity: 0.25,
+      metalness:         0.1,
+      roughness:         0.3
+    });
+    const m = new THREE.Mesh(unitGeo, mat);
+    const r = computeRadius(p.md, currentExponent);
+    m.scale.setScalar(r);
+    m.position.set(p.x - center.x, p.y - center.y, p.z - center.z);
+    m.userData = {
+      md:                   p.md,
+      z:                    p.z,
+      depthM:               p.depthM,
+      time:                 p.time,
+      date:                 p.date,
+      baseRadius:           r,
+      _origEmissive:        mat.emissive.clone(),
+      _origEmissiveIntensity: mat.emissiveIntensity,
+      isSphere:             true
+    };
+    sphereGroup.add(m);
+    sphereMeshes.push(m);
+    allPoints.push(p);
+  }
+
+  sphereGroup.position.copy(center);
+
+  // Camera
+  const dist = Math.max(sizeLen * 0.8, 3000);
+  camera.position.set(
+    center.x + dist * 0.6,
+    center.y + dist * 0.25,
+    center.z + dist * 0.55
+  );
+  camera.near = Math.max(0.1, dist * 0.00001);
+  camera.far  = Math.max(1e9, dist * 300, sizeLen * 300);
+  camera.updateProjectionMatrix();
+  controls.target.copy(center);
+  controls.update();
+
+  // Initialise date pickers from the data's actual range
+  const validDates = pts.map(p => p.date).filter(d => !isNaN(d.getTime()));
+  if (validDates.length) {
+    const minDate = validDates.reduce((a, b) => a < b ? a : b);
+    const maxDate = validDates.reduce((a, b) => a > b ? a : b);
+    dateStartEl.value  = toDateStr(minDate);
+    dateEndEl.value    = toDateStr(maxDate);
+    filterDateStart    = new Date(minDate); filterDateStart.setHours(0,0,0,0);
+    filterDateEnd      = new Date(maxDate); filterDateEnd.setHours(23,59,59,999);
+  }
+
+  // Reset MD/Depth sliders to full range
+  mdMinEl.value    = 0; mdMaxEl.value    = 6;
+  depthMinEl.value = 0; depthMaxEl.value = 10000;
+  filterMDMin    = 0; filterMDMax    = 6;
+  filterDepthMin = 0; filterDepthMax = 10000;
+  syncDualSlider(mdMinEl,    mdMaxEl,    mdFill,    mdMinLbl,    mdMaxLbl,    v => v.toFixed(2));
+  syncDualSlider(depthMinEl, depthMaxEl, depthFill, depthMinLbl, depthMaxLbl, v => v + ' m');
+
+  recomputeThresholds();
+  applyFilters();
+  filtersSection.style.display = '';
+}
+
+function toDateStr(d) {
+  // Local YYYY-MM-DD string for date input
+  const y  = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const dy = String(d.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${dy}`;
+}
+
+// ── CSV file input ─────────────────────────────────────────────────────────
+csvBtn.addEventListener('click', () => csvInput.click());
+csvInput.addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  csvStatus.textContent = `⏳ Caricamento di ${file.name}…`;
+  try {
+    const text = await file.text();
+    const rows = parseCSV(text);
+    if (!rows.length) throw new Error('Nessun evento valido trovato nel CSV');
+    buildScene(rows);
+    csvStatus.textContent = `✅ ${file.name} — ${rows.length.toLocaleString('it')} eventi caricati`;
+    csvBtn.textContent = '📂 Cambia CSV';
+  } catch (err) {
+    csvStatus.textContent = `❌ ${err.message}`;
+    console.error(err);
+  }
+  csvInput.value = '';
+});
+
+// ── Cube + edges + depth ticks + labels ─────────────────────────────────
+//  (Campi Flegrei area — hardcoded in EPSG:3857 metres)
+const cubeSide = 10000;
+const half     = cubeSide * 0.5;
+const cubeCenterWorld = new THREE.Vector3(1572000, 4985800, -5000);
+const cx = cubeCenterWorld.x, cy = cubeCenterWorld.y, cz = cubeCenterWorld.z;
+
+const corners = [
+  new THREE.Vector3(cx-half, cy-half, cz-half),
+  new THREE.Vector3(cx+half, cy-half, cz-half),
+  new THREE.Vector3(cx+half, cy+half, cz-half),
+  new THREE.Vector3(cx-half, cy+half, cz-half),
+  new THREE.Vector3(cx-half, cy-half, cz+half),
+  new THREE.Vector3(cx+half, cy-half, cz+half),
+  new THREE.Vector3(cx+half, cy+half, cz+half),
+  new THREE.Vector3(cx-half, cy+half, cz+half)
+];
+const edgePairs = [
+  [0,1],[1,2],[2,3],[3,0],
+  [4,5],[5,6],[6,7],[7,4],
+  [0,4],[1,5],[2,6],[3,7]
+];
+// Each edge becomes a Line2 so we can vary linewidth + colour by camera depth.
+// We track them in `cubeEdges` and update per-frame in animate().
+const cubeEdgesGroup = new THREE.Group(); scene.add(cubeEdgesGroup);
+const cubeEdges = []; // { line, mat, a, b, mid }
+for (const p of edgePairs) {
+  const a = corners[p[0]], b = corners[p[1]];
+  const geo = new LineGeometry();
+  geo.setPositions([a.x,a.y,a.z, b.x,b.y,b.z]);
+  const mat = new LineMaterial({
+    color: 0xc8d8ff,
+    linewidth: 2.2,           // in pixels
+    transparent: true,
+    opacity: 1.0,
+    dashed: false,
+    worldUnits: false
+  });
+  mat.resolution.set(innerWidth, innerHeight);
+  const line = new Line2(geo, mat);
+  line.computeLineDistances();
+  cubeEdgesGroup.add(line);
+  cubeEdges.push({ line, mat, a: a.clone(), b: b.clone(), mid: a.clone().add(b).multiplyScalar(0.5) });
+}
+
+// Internal grid on the 3 back faces (visible as 3 of the 6 faces facing away from camera).
+// Each face has its own mesh (ShaderMaterial with a procedural grid that fades into the cube).
+function makeGridFace(p0, uDir, vDir, uLen, vLen) {
+  const geo = new THREE.PlaneGeometry(uLen, vLen, 1, 1);
+  const mat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    uniforms: {
+      uOpacity:  { value: 0.0 },        // set per-frame: 0 if face is front-facing
+      uColor:    { value: new THREE.Color(0xffffff) },
+      uDivisions:{ value: 10.0 },       // 10 horizontal lines (every 1000m on a 10000m cube)
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+    `,
+    fragmentShader: `
+      varying vec2 vUv;
+      uniform float uOpacity;
+      uniform vec3  uColor;
+      uniform float uDivisions;
+      void main(){
+        // Only HORIZONTAL lines: V axis maps to world Z on side faces.
+        float gy = abs(fract(vUv.y * uDivisions - 0.5) - 0.5) / fwidth(vUv.y * uDivisions);
+        float line = 1.0 - min(gy, 1.0);
+        // Soft fade towards the centre of the face
+        float vignette = smoothstep(0.0, 0.45, min(min(vUv.x, 1.0-vUv.x), min(vUv.y, 1.0-vUv.y)));
+        float a = line * (0.35 + 0.65 * vignette) * uOpacity;
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(uColor, a);
+      }
+    `
+  });
+  // Position at p0, oriented so plane spans uDir x vDir
+  const mesh = new THREE.Mesh(geo, mat);
+  // Default plane lies on XY → align its +X to uDir, +Y to vDir
+  const u = uDir.clone().normalize();
+  const v = vDir.clone().normalize();
+  const n = new THREE.Vector3().crossVectors(u, v).normalize();
+  const m = new THREE.Matrix4().makeBasis(u, v, n);
+  mesh.quaternion.setFromRotationMatrix(m);
+  mesh.position.copy(p0).add(u.clone().multiplyScalar(uLen*0.5)).add(v.clone().multiplyScalar(vLen*0.5));
+  mesh.renderOrder = -1; // draw before spheres so they sit on top
+  mesh.userData.isGridFace = true;
+  mesh.userData.normal = n.clone();          // outward normal
+  mesh.userData.center = mesh.position.clone();
+  return mesh;
+}
+
+// 6 faces of the cube — we'll show only the 3 back ones
+const gridFaces = [];
+const ex = new THREE.Vector3(1,0,0), ey = new THREE.Vector3(0,1,0), ez = new THREE.Vector3(0,0,1);
+// -X face
+gridFaces.push(makeGridFace(corners[0], ey, ez, cubeSide, cubeSide));
+// +X face
+gridFaces.push(makeGridFace(corners[1], new THREE.Vector3(0,1,0), ez, cubeSide, cubeSide));
+// -Y face
+gridFaces.push(makeGridFace(corners[0], ex, ez, cubeSide, cubeSide));
+// +Y face
+gridFaces.push(makeGridFace(corners[3], ex, ez, cubeSide, cubeSide));
+// -Z face (bottom)
+gridFaces.push(makeGridFace(corners[0], ex, ey, cubeSide, cubeSide));
+// +Z face (top)
+gridFaces.push(makeGridFace(corners[4], ex, ey, cubeSide, cubeSide));
+// Override outward normals so they point away from cube centre
+gridFaces[0].userData.normal.set(-1,0,0);
+gridFaces[1].userData.normal.set( 1,0,0);
+gridFaces[2].userData.normal.set(0,-1,0);
+gridFaces[3].userData.normal.set(0, 1,0);
+gridFaces[4].userData.normal.set(0,0,-1);
+gridFaces[5].userData.normal.set(0,0, 1);
+// Top + bottom faces: no horizontal grid (their UV does not map to world Z)
+gridFaces[4].userData.skipGrid = true;
+gridFaces[5].userData.skipGrid = true;
+gridFaces.forEach(f => scene.add(f));
+
+// Depth tick marks on the 4 vertical edges (indices 8–11)
+const depthTicks  = [0, -2000, -4000, -6000, -8000, -10000];
+const tickMat     = new THREE.LineBasicMaterial({ color: 0xc8d8ff, linewidth: 4, transparent:true, opacity:0.9 });
+const vertEdges   = [8, 9, 10, 11];
+
+function createLabelMesh(text, scaleWorld, fontSize = 40) {
+  const pad = 8;
+  const canvas = document.createElement('canvas');
+  const ctx    = canvas.getContext('2d');
+  ctx.font     = `${fontSize}px sans-serif`;
+  const metrics = ctx.measureText(text);
+  const w = Math.ceil(metrics.width) + pad * 2;
+  const h = Math.ceil(fontSize * 1.2) + pad * 2;
+  canvas.width = w; canvas.height = h;
+  ctx.font = `${fontSize}px sans-serif`;
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#e8f4ff';
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillText(text, pad, h / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = tex.minFilter = THREE.LinearFilter;
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(scaleWorld * w / h, scaleWorld),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
+  );
+  mesh.renderOrder = 999;
+  return mesh;
+}
+
+vertEdges.forEach(edgeIdx => {
+  const pair   = edgePairs[edgeIdx];
+  const topV   = corners[pair[1]];
+  const bottomV= corners[pair[0]];
+  const mid    = new THREE.Vector3().addVectors(topV, bottomV).multiplyScalar(0.5);
+  let outDir   = new THREE.Vector3(mid.x - cx, mid.y - cy, 0).normalize();
+  if (outDir.length() === 0) outDir.set(1, 0, 0);
+  const tickLen  = cubeSide * 0.03;
+  const lblOff   = cubeSide * 0.06;
+  const lblScale = cubeSide * 0.05;
+  const topZ = cz + half, botZ = cz - half;
+
+  depthTicks.forEach(d => {
+    const tt  = (topZ - d) / (topZ - botZ);
+    const pos = new THREE.Vector3().lerpVectors(topV, bottomV, tt);
+    const start = pos.clone();
+    const end   = pos.clone().add(outDir.clone().multiplyScalar(tickLen));
+    scene.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([start, end]),
+      tickMat.clone()
+    ));
+    const lblMesh = createLabelMesh(`${d} m`, lblScale, 28);
+    lblMesh.position.copy(end.clone().add(outDir.clone().multiplyScalar(lblOff)));
+    lblMesh.lookAt(lblMesh.position.clone().add(new THREE.Vector3(0,0,1)));
+    scene.add(lblMesh);
+  });
+});
+
+// Cardinal fixed labels
+function createFixedLabel(text, pos, outDir, scaleWorld, fontSize = 56, rotateRad = 0) {
+  const pad = 12;
+  const canvas = document.createElement('canvas');
+  const ctx    = canvas.getContext('2d');
+  ctx.font = `${fontSize}px sans-serif`;
+  const m = ctx.measureText(text);
+  canvas.width  = Math.ceil(m.width) + pad * 2;
+  canvas.height = Math.ceil(fontSize * 1.2) + pad * 2;
+  ctx.font = `${fontSize}px sans-serif`;
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#e8f4ff';
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillText(text, pad, canvas.height / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = tex.magFilter = THREE.LinearFilter;
+  const aspect = canvas.width / canvas.height;
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(scaleWorld * aspect, scaleWorld),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
+  );
+  mesh.position.copy(pos);
+  mesh.lookAt(mesh.position.clone().add(outDir));
+  if (Math.abs(rotateRad) > 1e-6) mesh.rotateOnWorldAxis(outDir.clone().normalize(), rotateRad);
+  mesh.userData.lockedLabel = true;
+  scene.add(mesh);
+  return mesh;
+}
+
+const topZworld      = cz + half;
+const lblScale       = cubeSide * 0.12;
+const top_north_pos  = new THREE.Vector3((corners[6].x+corners[7].x)/2, (corners[6].y+corners[7].y)/2, topZworld);
+const top_ovest_pos  = new THREE.Vector3(corners[4].x, (corners[4].y+corners[7].y)/2, topZworld);
+const top_est_pos    = new THREE.Vector3(corners[5].x, (corners[5].y+corners[6].y)/2, topZworld);
+const offN = new THREE.Vector3(0, 1, 0).multiplyScalar(cubeSide * 0.02);
+const offW = new THREE.Vector3(-1, 0, 0).multiplyScalar(cubeSide * 0.02);
+const offE = new THREE.Vector3(1, 0, 0).multiplyScalar(cubeSide * 0.02);
+createFixedLabel('Nord - Pozzuoli', top_north_pos.clone().add(offN), new THREE.Vector3(0,1,0), lblScale, 56,  Math.PI);
+createFixedLabel('Ovest - Bacoli',  top_ovest_pos.clone().add(offW), new THREE.Vector3(-1,0,0), lblScale, 56, -Math.PI/2);
+createFixedLabel('Est - Bagnoli',   top_est_pos.clone().add(offE),   new THREE.Vector3(1,0,0),  lblScale, 56,  Math.PI/2);
+
+// Initial camera target at cube centre (before any CSV is loaded)
+{
+  const initDist = cubeSide * 2.2;
+  camera.position.set(cx + initDist * 0.6, cy + initDist * 0.25, cz + initDist * 0.6);
+  camera.near = 0.1; camera.far = 1e9;
+  camera.updateProjectionMatrix();
+  controls.target.copy(cubeCenterWorld);
+  controls.update();
+}
+
+// ── Size slider ───────────────────────────────────────────────────────────
+function recomputeThresholds() {
+  let sum = 0, cnt = 0;
+  sphereMeshes.forEach(m => { sum += m.userData.baseRadius || m.scale.x; cnt++; });
+  const avg = cnt ? sum / cnt : Math.max(1, sizeLen * 0.00035);
+  SNAP_DISTANCE    = Math.max(80,  avg * 1.2);
+  ERASER_DISTANCE  = Math.max(50,  avg * 0.9);
+  minVertexDistance= Math.max(0.5, avg * 0.02);
+  const px = Math.min(160, Math.max(24, Math.round(ERASER_DISTANCE / 2)));
+  eraserCursor.style.width = eraserCursor.style.height = px + 'px';
+}
+
+function updateSphereSizes(exponent) {
+  sphereMeshes.forEach(m => {
+    const r = computeRadius(m.userData.md, exponent);
+    m.scale.setScalar(r);
+    m.userData.baseRadius = r;
+  });
+  recomputeThresholds();
+  strokesGroup.children.forEach(ch => {
+    if (ch.material?.resolution) {
+      ch.material.resolution.set(innerWidth, innerHeight);
+      ch.material.needsUpdate = true;
+    }
+  });
+}
+
+slider.addEventListener('input', e => {
+  currentExponent = parseFloat(e.target.value);
+  sizeVal.textContent = currentExponent.toFixed(1);
+  updateSphereSizes(currentExponent);
+});
+
+// ── Selection helpers ─────────────────────────────────────────────────────
+function selectSphere(mesh) {
+  if (selectedSphere === mesh) return; // already selected — no-op
+  deselectSphere();
+  selectedSphere = mesh;
+  // Attach halo as child: local scale 1.4 → world radius = mesh.scale.x * 1.4
+  selectionHalo.scale.setScalar(1.4);
+  selectionHalo.visible = true;
+  mesh.add(selectionHalo);
+}
+
+function deselectSphere() {
+  if (!selectedSphere) return;
+  if (selectionHalo.parent) selectionHalo.parent.remove(selectionHalo);
+  selectionHalo.visible = false;
+  selectedSphere = null;
+}
+
+// ── Tooltip click + sphere selection ─────────────────────────────────────
+window.addEventListener('click', e => {
+  if (pencilToggle.checked || eraseBtn.classList.contains('active')) return;
+  const ndc = new THREE.Vector2(
+    (e.clientX / innerWidth) * 2 - 1,
+    -(e.clientY / innerHeight) * 2 + 1
+  );
+  raycaster.setFromCamera(ndc, camera);
+  // Only raycast visible spheres
+  const targets = sphereMeshes.filter(m => m.visible);
+  const hits    = raycaster.intersectObjects(targets);
+
+  if (hits.length) {
+    const mesh = hits[0].object;
+    selectSphere(mesh);
+    const u        = mesh.userData;
+    const depthKm  = (u.depthM / 1000).toFixed(2);
+    tooltip.innerHTML = `
+      <div class="tt-title">MD ${u.md.toFixed(2)}</div>
+      🕒 ${u.time}<br>
+      ⬇️ Profondità: ${u.depthM.toFixed(0)} m (${depthKm} km)
+    `;
+    // Keep tooltip within viewport
+    const tipX = Math.min(e.clientX + 16, innerWidth  - 200);
+    const tipY = Math.min(e.clientY + 16, innerHeight - 100);
+    tooltip.style.left    = tipX + 'px';
+    tooltip.style.top     = tipY + 'px';
+    tooltip.style.opacity = '1';
+  } else {
+    deselectSphere();
+    tooltip.style.opacity = '0';
+  }
+});
+
+// ── Pencil/eraser helpers ─────────────────────────────────────────────────
+const tmpV = new THREE.Vector3();
+
+function findNearestSphereToRay(ray, maxDist) {
+  let nearest = null, minDist = maxDist;
+  sphereGroup.children.forEach(s => {
+    if (!s.isMesh || !s.visible) return;
+    if (!(s.userData.md > MD_PEN_THRESHOLD)) return;
+    s.getWorldPosition(tmpV);
+    const t  = tmpV.clone().sub(ray.origin);
+    const tP = t.dot(ray.direction);
+    const cl = ray.origin.clone().add(ray.direction.clone().multiplyScalar(tP));
+    const d  = tmpV.distanceTo(cl);
+    if (d < minDist) { minDist = d; nearest = s; }
+  });
+  return nearest;
+}
+
+function surfacePointForSphereNearestToRay(sphere, ray) {
+  sphere.getWorldPosition(tmpV);
+  const cn = tmpV.clone();
+  const sc = new THREE.Vector3(); sphere.getWorldScale(sc);
+  const radius = sc.x;
+  const v   = cn.clone().sub(ray.origin);
+  const t   = v.dot(ray.direction);
+  const cl  = ray.origin.clone().add(ray.direction.clone().multiplyScalar(t));
+  const dir = cl.clone().sub(cn);
+  if (dir.length() === 0) dir.copy(ray.direction).negate();
+  return cn.clone().add(dir.normalize().multiplyScalar(radius));
+}
+
+function setDrawPlane(point) {
+  drawPlanePoint = point.clone();
+  const camDir = camera.getWorldDirection(new THREE.Vector3());
+  drawPlane.setFromNormalAndCoplanarPoint(camDir.clone().negate(), drawPlanePoint);
+}
+
+function updateDrawPlaneFromCamera() {
+  if (!drawPlanePoint) return;
+  const camDir = camera.getWorldDirection(new THREE.Vector3());
+  drawPlane.setFromNormalAndCoplanarPoint(camDir.clone().negate(), drawPlanePoint);
+}
+
+function worldOnPlaneFromClient(x, y) {
+  updateDrawPlaneFromCamera();
+  const ndc = new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const out = new THREE.Vector3();
+  return raycaster.ray.intersectPlane(drawPlane, out) ? out.clone() : null;
+}
+
+// Preview line
+let previewLine = null, currentPoints = [], lastPoint = null;
+
+function createOrUpdatePreview() {
+  if (!previewLine) {
+    previewLine = new THREE.Line(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: new THREE.Color(pencilColor.value), linewidth: 2 })
+    );
+    previewLine.frustumCulled = false;
+    scene.add(previewLine);
+  }
+  const pts = currentPoints;
+  if (!pts || pts.length === 0) {
+    previewLine.geometry.setDrawRange(0, 0);
+    return;
+  }
+  const arr = new Float32Array(pts.length * 3);
+  for (let i = 0; i < pts.length; i++) {
+    arr[i*3]=pts[i].x; arr[i*3+1]=pts[i].y; arr[i*3+2]=pts[i].z;
+  }
+  previewLine.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+  previewLine.geometry.setDrawRange(0, pts.length);
+  previewLine.material.color.set(pencilColor.value);
+  previewLine.geometry.attributes.position.needsUpdate = true;
+}
+
+function removePreview() {
+  if (!previewLine) return;
+  previewLine.geometry.dispose?.();
+  previewLine.material.dispose?.();
+  scene.remove(previewLine);
+  previewLine = null;
+}
+
+function commitStroke() {
+  if (currentPoints.length < 2) { currentPoints = []; lastPoint = null; removePreview(); return; }
+  const positions = new Float32Array(currentPoints.length * 3);
+  const wpArray   = [];
+  for (let i = 0; i < currentPoints.length; i++) {
+    positions[i*3]=currentPoints[i].x; positions[i*3+1]=currentPoints[i].y; positions[i*3+2]=currentPoints[i].z;
+    wpArray.push(currentPoints[i].clone());
+  }
+  const g = new LineGeometry(); g.setPositions(positions);
+  const lineW = parseFloat(thickSlider.value);
+  const colHex = new THREE.Color(pencilColor.value).getHex();
+  const m = new LineMaterial({ linewidth: lineW, dashed: false, alphaToCoverage: true });
+  m.resolution = new THREE.Vector2(innerWidth, innerHeight);
+  m.color = new THREE.Color(pencilColor.value);
+  const line = new Line2(g, m); line.computeLineDistances(); line.scale.set(1,1,1);
+  line.userData = { worldPoints: wpArray, isLine: true, _origColorHex: colHex, _linewidth: lineW, createdAt: Date.now() };
+  strokesGroup.add(line);
+  currentPoints = []; lastPoint = null; removePreview();
+}
+
+// Screen-space utilities for eraser
+function worldToScreen(wv) {
+  const v = wv.clone().project(camera);
+  return { x:(v.x*0.5+0.5)*innerWidth, y:(-v.y*0.5+0.5)*innerHeight, ndcY: v.y };
+}
+function distPtSeg2D(px,py,ax,ay,bx,by) {
+  const vx=bx-ax, vy=by-ay, wx=px-ax, wy=py-ay;
+  const c1=vx*wx+vy*wy;
+  if (c1<=0) return Math.hypot(px-ax,py-ay);
+  const c2=vx*vx+vy*vy;
+  if (c2<=c1) return Math.hypot(px-bx,py-by);
+  const t=c1/c2;
+  return Math.hypot(px-(ax+t*vx), py-(ay+t*vy));
+}
+
+function findNearestLineScreen(sx, sy, maxPx) {
+  let nearest=null, minDist=maxPx;
+  for (const obj of strokesGroup.children) {
+    if (!obj.userData?.isLine) continue;
+    const wp = obj.userData.worldPoints; if (!wp || wp.length < 2) continue;
+    const proj = wp.map(w => worldToScreen(w));
+    for (let i=0; i<proj.length-1; i++) {
+      const a=proj[i], b=proj[i+1];
+      if (!Number.isFinite(a.x)||!Number.isFinite(b.x)) continue;
+      const d = distPtSeg2D(sx,sy,a.x,a.y,b.x,b.y);
+      if (d < minDist) { minDist=d; nearest=obj; }
+    }
+  }
+  return { nearest, minDist };
+}
+
+function erasePartialAtScreen(sx, sy, pxThreshold) {
+  let anyRemoved = false;
+  for (let idx = strokesGroup.children.length-1; idx>=0; idx--) {
+    const obj = strokesGroup.children[idx];
+    if (!obj.userData?.isLine) continue;
+    const wp = obj.userData.worldPoints; if (!wp || wp.length<2) continue;
+    const proj = wp.map(w => worldToScreen(w));
+    const toDel = proj.map(p => {
+      if (!p||!Number.isFinite(p.x)||p.ndcY>1||p.ndcY<-1) return false;
+      return Math.hypot(sx-p.x, sy-p.y) <= pxThreshold;
+    });
+    if (!toDel.some(Boolean)) continue;
+
+    // Split into surviving sub-segments
+    const groups = []; let i = 0;
+    while (i < wp.length) {
+      while (i < wp.length && toDel[i]) i++;
+      if (i >= wp.length) break;
+      const start = i;
+      while (i < wp.length && !toDel[i]) i++;
+      const end = i - 1;
+      if (end - start + 1 >= 2) {
+        const cnt = end - start + 1;
+        const arr = new Float32Array(cnt*3); const pts = [];
+        for (let k=0; k<cnt; k++) {
+          const wv=wp[start+k]; arr[k*3]=wv.x; arr[k*3+1]=wv.y; arr[k*3+2]=wv.z;
+          pts.push(wv.clone());
+        }
+        groups.push({ positions: arr, pts });
+      }
+    }
+
+    // Preserve original color and linewidth of the stroke
+    const origColorHex = obj.userData._origColorHex ?? new THREE.Color(pencilColor.value).getHex();
+    const origWidth    = obj.userData._linewidth     ?? parseFloat(thickSlider.value);
+    const origWidthW   = obj.userData._widthWorld;
+    const wasMeshLine  = !!obj.userData.isMeshLine;
+
+    try { obj.geometry.dispose?.(); } catch(e){}
+    try { obj.material.dispose?.();  } catch(e){}
+    strokesGroup.remove(obj);
+
+    for (const gi of groups) {
+      let newLine;
+      if (wasMeshLine && origWidthW) {
+        // Ricostruisci come MeshLine (matita) per coerenza visiva
+        const made = makePenMeshLine(origColorHex, origWidthW);
+        made.geo.setPoints(gi.positions);
+        newLine = made.mesh;
+      } else {
+        const g = new LineGeometry(); g.setPositions(gi.positions);
+        const m = new LineMaterial({ linewidth: origWidth, dashed: false, alphaToCoverage: true });
+        m.resolution = new THREE.Vector2(innerWidth, innerHeight);
+        m.color = new THREE.Color().setHex(origColorHex);
+        newLine = new Line2(g, m); newLine.computeLineDistances(); newLine.scale.set(1,1,1);
+      }
+      newLine.userData = {
+        worldPoints: gi.pts.slice(),
+        isLine: true,
+        isMeshLine: wasMeshLine,
+        _origColorHex: origColorHex,
+        _linewidth: origWidth,
+        _widthWorld: origWidthW,
+        createdAt: Date.now()
+      };
+      strokesGroup.add(newLine);
+    }
+    anyRemoved = true;
+  }
+  return anyRemoved;
+}
+
+// Eraser disk (3D overlay)
+let eraserDisk = null;
+function ensureEraserDisk() {
+  if (eraserDisk) return;
+  eraserDisk = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 64),
+    new THREE.MeshBasicMaterial({ color:0xffffff, opacity:0.05, transparent:true, depthWrite:false })
+  );
+  eraserDisk.renderOrder = 2000;
+  scene.add(eraserDisk);
+}
+function updateEraserDisk(pos, normal, radius) {
+  ensureEraserDisk();
+  eraserDisk.position.copy(pos);
+  eraserDisk.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), normal.clone().normalize());
+  eraserDisk.scale.setScalar(radius * 0.01);
+  eraserDisk.visible = true;
+}
+function hideEraserDisk() { if (eraserDisk) eraserDisk.visible = false; }
+
+// ── Sphere hover highlight (for pencil snap feedback) ────────────────────
+let highlightedSphere = null;
+function highlightSphere(mesh) {
+  if (highlightedSphere === mesh) return;
+  if (highlightedSphere) unhighlightSphere(highlightedSphere);
+  if (!mesh?.material) return;
+  if (!mesh.userData._savedEmissive) mesh.userData._savedEmissive = mesh.material.emissive.clone();
+  if (mesh.userData._savedEmissiveIntensity === undefined)
+    mesh.userData._savedEmissiveIntensity = mesh.material.emissiveIntensity;
+  mesh.material.emissive.setHex(0xffff66);
+  mesh.material.emissiveIntensity = Math.max(0.6, (mesh.userData._savedEmissiveIntensity || 0.2) + 0.6);
+  highlightedSphere = mesh;
+}
+function unhighlightSphere(mesh) {
+  if (!mesh?.material) return;
+  if (mesh.userData._savedEmissive) mesh.material.emissive.copy(mesh.userData._savedEmissive);
+  if (mesh.userData._savedEmissiveIntensity !== undefined)
+    mesh.material.emissiveIntensity = mesh.userData._savedEmissiveIntensity;
+  if (highlightedSphere === mesh) highlightedSphere = null;
+}
+
+let highlightedLine = null;
+function highlightLine(line) {
+  if (highlightedLine === line) return;
+  if (highlightedLine) unhighlightLine(highlightedLine);
+  if (!line?.material) return;
+  if (!line.userData._origColorHex) line.userData._origColorHex = line.material.color.getHex();
+  line.material.color.setHex(0xffff66);
+  line.material.needsUpdate = true;
+  highlightedLine = line;
+}
+function unhighlightLine(line) {
+  if (!line?.material) return;
+  if (line.userData?._origColorHex) line.material.color.setHex(line.userData._origColorHex);
+  line.material.needsUpdate = true;
+  if (highlightedLine === line) highlightedLine = null;
+}
+
+// ── Orbit controls state save/restore ─────────────────────────────────────
+const savedControls = { rotate:true, pan:true, zoom:true, mouse:{} };
+function saveControlsState() {
+  savedControls.rotate = controls.enableRotate;
+  savedControls.pan    = controls.enablePan;
+  savedControls.zoom   = controls.enableZoom;
+  savedControls.mouse  = { LEFT: controls.mouseButtons.LEFT, MIDDLE: controls.mouseButtons.MIDDLE, RIGHT: controls.mouseButtons.RIGHT };
+}
+function restoreControlsState() {
+  controls.enableRotate = savedControls.rotate;
+  controls.enablePan    = savedControls.pan;
+  controls.enableZoom   = savedControls.zoom;
+  if (savedControls.mouse) {
+    controls.mouseButtons.LEFT   = savedControls.mouse.LEFT;
+    controls.mouseButtons.MIDDLE = savedControls.mouse.MIDDLE;
+    controls.mouseButtons.RIGHT  = savedControls.mouse.RIGHT;
+  }
+}
+
+function enterPenMode() {
+  eraseBtn.classList.remove('active');
+  saveControlsState();
+  controls.enableRotate = false;
+  controls.enablePan    = true;
+  controls.enableZoom   = true;
+  // LMB is reserved for pen anchors → disable LMB on OrbitControls
+  controls.mouseButtons.LEFT   = null;
+  controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
+  controls.mouseButtons.RIGHT  = THREE.MOUSE.PAN;
+  renderer.domElement.style.cursor = 'crosshair';
+  eraserCursor.style.display = 'none';
+}
+function exitPenMode() {
+  pencilToggle.classList?.remove('active');
+  // Chiude il tratto in corso (se l'utente disattiva la penna a metà)
+  if (drawingActive) endStroke();
+  restoreControlsState();
+  renderer.domElement.style.cursor = '';
+  removePreview();
+  if (highlightedSphere) unhighlightSphere(highlightedSphere);
+}
+function enterEraserMode() {
+  pencilToggle.checked = false; exitPenMode();
+  eraseBtn.classList.add('active');
+  saveControlsState();
+  controls.enableRotate = false;
+  controls.enablePan    = true;
+  controls.enableZoom   = true;
+  controls.mouseButtons.LEFT   = THREE.MOUSE.ROTATE;
+  controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
+  controls.mouseButtons.RIGHT  = THREE.MOUSE.PAN;
+  renderer.domElement.style.cursor = 'crosshair';
+  eraserCursor.style.display = 'block';
+}
+function exitEraserMode() {
+  eraseBtn.classList.remove('active');
+  renderer.domElement.style.cursor = '';
+  eraserCursor.style.display = 'none';
+  restoreControlsState();
+  if (highlightedLine) unhighlightLine(highlightedLine);
+  hideEraserDisk();
+}
+
+pencilToggle.addEventListener('change', ev => {
+  if (ev.target.checked) enterPenMode();
+  else exitPenMode();
+});
+eraseBtn.addEventListener('click', () => {
+  if (eraseBtn.classList.contains('active')) exitEraserMode();
+  else enterEraserMode();
+});
+clearBtn.addEventListener('click', () => {
+  for (let i = strokesGroup.children.length-1; i>=0; i--) {
+    const o = strokesGroup.children[i];
+    if (!o.userData?.isLine) continue;
+    try { o.geometry.dispose?.(); } catch(e){}
+    try { o.material.dispose?.(); } catch(e){}
+    strokesGroup.remove(o);
+  }
+});
+pencilColor.addEventListener('input', () => {
+  if (previewLine) previewLine.material.color.set(pencilColor.value);
+});
+thickSlider.addEventListener('input', e => thickVal.textContent = e.target.value);
+
+// ═══════════════════════════════════════════════════════════════════════
+// ── FREEHAND 3D PENCIL ───────────────────────────────────────────────────
+// Disegno libero "come una matita" dentro il cubo:
+//
+//   1) pointerdown → raycast sulle sfere/cubo per trovare la profondità Z
+//      su cui ancorare il tratto. Quel punto definisce un piano parallelo
+//      allo schermo (normale = direzione camera). Tutto il tratto viene
+//      proiettato su quel piano → restando "dentro" il volume 3D.
+//
+//   2) pointermove → "lazy-brush" smoothing: il pennino segue il cursore
+//      con un raggio di latenza (algoritmo dulnan/lazy-brush). Il risultato
+//      è un tratto morbido, senza tremolio, perfetto per matita.
+//
+//   3) Render → pmndrs/meshline (MeshLineGeometry/Material): tubi
+//      billboard con larghezza in WORLD UNITS → spessore prospettico vero.
+//      Texture grafite procedurale → look "matita colorata su carta".
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── Texture grafite procedurale (riusata da tutti i tratti) ─────────────
+const pencilTex = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 32;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  // Grain noise per simulare la grafite
+  const img = ctx.getImageData(0, 0, c.width, c.height);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = 200 + Math.random() * 55;     // 200-255
+    img.data[i] = img.data[i+1] = img.data[i+2] = n;
+    img.data[i+3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  // Fade ai bordi (alto/basso del nastro) per ammorbidire il tubo
+  const grad = ctx.createLinearGradient(0, 0, 0, c.height);
+  grad.addColorStop(0,   'rgba(0,0,0,0.55)');
+  grad.addColorStop(0.5, 'rgba(0,0,0,0)');
+  grad.addColorStop(1,   'rgba(0,0,0,0.55)');
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.globalCompositeOperation = 'source-over';
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+})();
+
+// ── Stato disegno freehand ──────────────────────────────────────────────
+let drawingActive    = false;
+const penPoints      = [];                        // THREE.Vector3[] (world)
+let penPlane         = new THREE.Plane();         // piano di proiezione
+let penPlaneAnchor   = new THREE.Vector3();       // punto di aggancio (depth lock)
+let penLiveLine      = null;                      // MeshLine in costruzione
+let penLiveMat       = null;
+let penLiveGeo       = null;
+let lazyBrushPos     = new THREE.Vector2();       // posizione "ritardata" del pennino
+let lazyTarget       = new THREE.Vector2();       // posizione corrente del cursore
+const LAZY_RADIUS    = 22;                        // px di latenza ("lazy")
+const MIN_SAMPLE_DIST_WORLD_FACTOR = 0.0008;      // densità campioni (rispetto a sizeLen)
+
+// ── Utility: raycast per trovare profondità di aggancio ─────────────────
+function findPenAnchorPoint(ray) {
+  // 1. Prova hit diretto su una sfera visibile
+  const targets = sphereMeshes.filter(m => m.visible);
+  const hits = raycaster.intersectObjects(targets);
+  if (hits.length) return hits[0].point.clone();
+
+  // 2. Sfera vicina al raggio (snap morbido)
+  const near = findNearestSphereToRay(ray, SNAP_DISTANCE * 4);
+  if (near) {
+    const p = new THREE.Vector3();
+    near.getWorldPosition(p);
+    return p;
+  }
+
+  // 3. Intersezione con il cubo (qualunque faccia)
+  const cubeBox = new THREE.Box3(
+    new THREE.Vector3(cx-half, cy-half, cz-half),
+    new THREE.Vector3(cx+half, cy+half, cz+half)
+  );
+  const hit = new THREE.Vector3();
+  if (ray.intersectBox(cubeBox, hit)) return hit.clone();
+
+  // 4. Fallback: centro della scena
+  return (bbox ? bbox.getCenter(new THREE.Vector3()) : cubeCenterWorld).clone();
+}
+
+// Costruisce/aggiorna il piano di disegno: parallelo allo schermo, passante per l'ancora
+function rebuildPenPlane() {
+  const camDir = new THREE.Vector3();
+  camera.getWorldDirection(camDir);
+  // Normale del piano = -camDir (verso la camera)
+  penPlane.setFromNormalAndCoplanarPoint(camDir.clone().negate(), penPlaneAnchor);
+}
+
+function clientToPenPlane(x, y) {
+  const ndc = new THREE.Vector2((x/innerWidth)*2-1, -(y/innerHeight)*2+1);
+  raycaster.setFromCamera(ndc, camera);
+  const out = new THREE.Vector3();
+  return raycaster.ray.intersectPlane(penPlane, out) ? out : null;
+}
+
+// ── MeshLine helpers ────────────────────────────────────────────────────
+function makePenMeshLine(colorHex, widthWorld) {
+  const geo = new MeshLineGeometry();
+  const mat = new MeshLineMaterial({
+    color:           new THREE.Color(colorHex),
+    lineWidth:       widthWorld,
+    sizeAttenuation: 1,                  // larghezza in WORLD units
+    resolution:      new THREE.Vector2(innerWidth, innerHeight),
+    useMap:          1,
+    map:             pencilTex,
+    repeat:          new THREE.Vector2(40, 1),
+    transparent:     true,
+    depthTest:       true,
+    depthWrite:      false,
+    side:            THREE.DoubleSide,
+    alphaTest:       0.02
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.raycast = meshLineRaycast;
+  mesh.frustumCulled = false;
+  return { mesh, geo, mat };
+}
+
+// Spessore in world units derivato dallo slider (1..100 px-feel)
+function penWidthWorld() {
+  const slider = parseFloat(thickSlider.value);
+  // Mappa 1..100 → 0.4..6 % della scala scena (sizeLen) o cubo
+  const ref = sizeLen > 1 ? sizeLen : cubeSide;
+  const t = (slider - 1) / 99;
+  return ref * (0.0008 + t * 0.012);
+}
+
+// ── Lazy-brush smoothing (ispirato a dulnan/lazy-brush) ─────────────────
+// Sposta `lazyBrushPos` verso `lazyTarget` solo se la distanza supera il
+// raggio di latenza, fermandosi sempre a `LAZY_RADIUS` dal target.
+function updateLazyBrush() {
+  const dx = lazyTarget.x - lazyBrushPos.x;
+  const dy = lazyTarget.y - lazyBrushPos.y;
+  const d  = Math.hypot(dx, dy);
+  if (d <= LAZY_RADIUS) return false;       // ancora dentro il raggio: pennino fermo
+  const k = (d - LAZY_RADIUS) / d;
+  lazyBrushPos.x += dx * k;
+  lazyBrushPos.y += dy * k;
+  return true;
+}
+
+// ── Stroke lifecycle ────────────────────────────────────────────────────
+function startStroke(clientX, clientY) {
+  const ndc = new THREE.Vector2((clientX/innerWidth)*2-1, -(clientY/innerHeight)*2+1);
+  raycaster.setFromCamera(ndc, camera);
+
+  penPlaneAnchor.copy(findPenAnchorPoint(raycaster.ray));
+  rebuildPenPlane();
+
+  penPoints.length = 0;
+  const wp = clientToPenPlane(clientX, clientY);
+  if (wp) penPoints.push(wp.clone());
+
+  const made = makePenMeshLine(pencilColor.value, penWidthWorld());
+  penLiveLine = made.mesh; penLiveGeo = made.geo; penLiveMat = made.mat;
+  scene.add(penLiveLine);
+
+  lazyBrushPos.set(clientX, clientY);
+  lazyTarget.set(clientX, clientY);
+  drawingActive = true;
+}
+
+// ── Magnetismo verso le sfere (più forte sulle MD grandi) ───────────────
+// Restituisce un vettore di "attrazione" da sommare al punto wp.
+// L'effetto è soft: massimo ~35% verso il centro della sfera più
+// "massiccia" entro un raggio basato su sizeLen.
+const _magTmp = new THREE.Vector3();
+function magneticPullForPoint(wp) {
+  const ref = sizeLen > 1 ? sizeLen : cubeSide;
+  const radius = ref * 0.09;          // raggio d'influenza (aumentato)
+  let bestPull = new THREE.Vector3();
+  let bestScore = 0;
+  for (const m of sphereMeshes) {
+    if (!m.visible) continue;
+    if (!(m.userData.md > MD_PEN_THRESHOLD)) continue;
+    m.getWorldPosition(_magTmp);
+    const d = wp.distanceTo(_magTmp);
+    if (d > radius || d < 1e-4) continue;
+    // Falloff: vicino = forte, lontano = debole
+    const falloff = 1 - (d / radius);
+    // Peso per magnitudo: MD grande = più magnetica
+    const mdWeight = Math.pow(m.userData.md, 2);
+    const score = falloff * mdWeight;
+    if (score > bestScore) {
+      bestScore = score;
+      // Magnetismo leggermente più marcato verso le sfere grandi
+      const strength = 0.55 * falloff;
+      bestPull.copy(_magTmp).sub(wp).multiplyScalar(strength);
+    }
+  }
+  return bestPull;
+}
+
+function extendStroke(clientX, clientY) {
+  lazyTarget.set(clientX, clientY);
+  if (!updateLazyBrush()) return;          // ancora nel raggio lazy: skip
+  const wp = clientToPenPlane(lazyBrushPos.x, lazyBrushPos.y);
+  if (!wp) return;
+  // Applica magnetismo verso le sfere grandi
+  const pull = magneticPullForPoint(wp);
+  wp.add(pull);
+  const minDist = Math.max(0.5, (sizeLen > 1 ? sizeLen : cubeSide) * MIN_SAMPLE_DIST_WORLD_FACTOR);
+  const last = penPoints[penPoints.length - 1];
+  if (last && wp.distanceTo(last) < minDist) return;
+  penPoints.push(wp.clone());
+  refreshLivePreview();
+}
+
+function refreshLivePreview() {
+  if (!penLiveGeo || penPoints.length < 2) return;
+  // MeshLineGeometry vuole un array piatto Float32 [x,y,z, x,y,z, ...]
+  const arr = new Float32Array(penPoints.length * 3);
+  for (let i = 0; i < penPoints.length; i++) {
+    arr[i*3]   = penPoints[i].x;
+    arr[i*3+1] = penPoints[i].y;
+    arr[i*3+2] = penPoints[i].z;
+  }
+  penLiveGeo.setPoints(arr);
+}
+
+function endStroke() {
+  if (!drawingActive) return;
+  drawingActive = false;
+  if (penPoints.length < 2) {
+    // niente di disegnato → pulisci preview
+    if (penLiveLine) {
+      scene.remove(penLiveLine);
+      try { penLiveGeo.dispose(); penLiveMat.dispose(); } catch(e){}
+    }
+    penLiveLine = penLiveGeo = penLiveMat = null;
+    return;
+  }
+  refreshLivePreview();
+  // Promuovi la live line in stroke definitivo (mantiene lo stesso mesh)
+  const wpArray = penPoints.map(p => p.clone());
+  penLiveLine.userData = {
+    worldPoints:    wpArray,
+    isLine:         true,
+    isMeshLine:     true,
+    _origColorHex:  new THREE.Color(pencilColor.value).getHex(),
+    _linewidth:     parseFloat(thickSlider.value),
+    _widthWorld:    penWidthWorld(),
+    createdAt:      Date.now()
+  };
+  scene.remove(penLiveLine);
+  strokesGroup.add(penLiveLine);
+  penLiveLine = penLiveGeo = penLiveMat = null;
+  penPoints.length = 0;
+}
+
+// ── Pointer event handlers ──────────────────────────────────────────────
+function onPointerDown(e) {
+  const ndc = new THREE.Vector2((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+  raycaster.setFromCamera(ndc, camera);
+
+  if (pencilToggle.checked && e.button === 0) {
+    startStroke(e.clientX, e.clientY);
+    return;
+  }
+  if (eraseBtn.classList.contains('active') && e.button === 0) {
+    const pxT = Math.max(8, parseInt(getComputedStyle(eraserCursor).width) / 2);
+    const removed = erasePartialAtScreen(e.clientX, e.clientY, pxT);
+    if (removed && highlightedLine) unhighlightLine(highlightedLine);
+    return;
+  }
+}
+
+function onPointerMove(e) {
+  if (drawingActive) {
+    extendStroke(e.clientX, e.clientY);
+    return;
+  }
+  const ndc = new THREE.Vector2((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+  raycaster.setFromCamera(ndc, camera);
+
+  if (pencilToggle.checked) {
+    // hover highlight per feedback di "snap depth"
+    const targets = sphereMeshes.filter(m => m.visible);
+    const hits = raycaster.intersectObjects(targets);
+    if (hits.length) highlightSphere(hits[0].object);
+    else if (highlightedSphere) unhighlightSphere(highlightedSphere);
+  }
+  if (eraseBtn.classList.contains('active')) {
+    const fallback = bbox ? bbox.getCenter(new THREE.Vector3()) : cubeCenterWorld;
+    if (!drawPlanePoint) setDrawPlane(fallback);
+    updateDrawPlaneFromCamera();
+    const wp = worldOnPlaneFromClient(e.clientX, e.clientY);
+    if (wp) {
+      eraserCursor.style.display = 'block';
+      eraserCursor.style.left = e.clientX + 'px';
+      eraserCursor.style.top  = e.clientY + 'px';
+      updateEraserDisk(wp, drawPlane.normal, ERASER_DISTANCE);
+      const pxT = Math.max(8, parseInt(getComputedStyle(eraserCursor).width) / 2);
+      const { nearest } = findNearestLineScreen(e.clientX, e.clientY, pxT * 1.5);
+      if (nearest) highlightLine(nearest);
+      else if (highlightedLine) unhighlightLine(highlightedLine);
+    } else {
+      eraserCursor.style.display = 'none'; hideEraserDisk();
+      if (highlightedLine) unhighlightLine(highlightedLine);
+    }
+  } else {
+    eraserCursor.style.display = 'none'; hideEraserDisk();
+  }
+}
+
+function onPointerUp(e) {
+  if (drawingActive && e.button === 0) endStroke();
+}
+
+window.addEventListener('pointerdown', onPointerDown, { capture: true });
+window.addEventListener('pointermove', onPointerMove, { capture: true });
+window.addEventListener('pointerup',   onPointerUp,   { capture: true });
+window.addEventListener('pointercancel', () => { if (drawingActive) endStroke(); });
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────
+window.addEventListener('keydown', ev => {
+  // Ignore typing in input fields
+  const t = ev.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+
+  if (ev.key === 'p' || ev.key === 'P') {
+    pencilToggle.checked = !pencilToggle.checked;
+    pencilToggle.dispatchEvent(new Event('change'));
+  }
+  if (ev.key === 'e' || ev.key === 'E') {
+    if (eraseBtn.classList.contains('active')) exitEraserMode();
+    else enterEraserMode();
+  }
+  if (ev.key === 'Escape') {
+    deselectSphere(); tooltip.style.opacity = '0';
+    if (drawingActive) endStroke();
+  }
+});
+
+// ── Resize ────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  strokesGroup.children.forEach(ch => {
+    if (ch.material?.resolution) {
+      ch.material.resolution.set(innerWidth, innerHeight);
+      ch.material.needsUpdate = true;
+    }
+  });
+  cubeEdges.forEach(e => { e.mat.resolution.set(innerWidth, innerHeight); e.mat.needsUpdate = true; });
+});
+
+// ── Animate loop ──────────────────────────────────────────────────────────
+const _camPos = new THREE.Vector3();
+const _camDir = new THREE.Vector3();
+const _toMid  = new THREE.Vector3();
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+
+  // Pulse halo opacity when a sphere is selected
+  if (selectionHalo.visible) {
+    haloMat.opacity = 0.3 + 0.2 * Math.sin(Date.now() * 0.004);
+  }
+
+  if ((pencilToggle.checked || eraseBtn.classList.contains('active')) && drawPlanePoint) {
+    updateDrawPlaneFromCamera();
+  }
+
+  // ── Cube edges: vary thickness + opacity + colour with depth ──────────
+  // Compute camera distance to each edge midpoint, normalise across edges,
+  // then map: closer = thicker + brighter + slightly warmer; farther = thin + faint + cool/blue.
+  camera.getWorldPosition(_camPos);
+  let dMin = Infinity, dMax = -Infinity;
+  const ds = new Array(cubeEdges.length);
+  for (let i = 0; i < cubeEdges.length; i++) {
+    ds[i] = _camPos.distanceTo(cubeEdges[i].mid);
+    if (ds[i] < dMin) dMin = ds[i];
+    if (ds[i] > dMax) dMax = ds[i];
+  }
+  // Linee del cubo: bianche, spessore e opacità uniformi (no fade prospettico)
+  for (let i = 0; i < cubeEdges.length; i++) {
+    const m = cubeEdges[i].mat;
+    m.linewidth = 1.6;
+    m.opacity   = 1.0;
+    m.color.setHex(0xffffff);
+    m.needsUpdate = true;
+  }
+
+  // ── Grid faces: show only the 3 facing AWAY from camera (back faces) ──
+  // A face is "back" when (camera - faceCenter) · outwardNormal < 0
+  for (const f of gridFaces) {
+    _toMid.copy(_camPos).sub(f.userData.center);
+    const dot = _toMid.dot(f.userData.normal);
+    const target = (f.userData.skipGrid || dot >= 0) ? 0.0 : 0.85;
+    // smooth toggle
+    const cur = f.material.uniforms.uOpacity.value;
+    f.material.uniforms.uOpacity.value = cur + (target - cur) * 0.2;
+  }
+
+  // (live preview tratto matita aggiornato dentro extendStroke)
+
+  // Keep directional light co-located with camera
+  dirLight.position.copy(_camPos);
+  camera.getWorldDirection(_camDir);
+  dirLight.target.position.copy(_camPos.clone().add(_camDir.multiplyScalar(1)));
+  dirLight.target.updateMatrixWorld();
+
+  renderer.render(scene, camera);
+}
+
+// ── Collapse buttons for UI panels ──────────────────────────────────────
+document.querySelectorAll('.collapseBtn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = document.getElementById(btn.dataset.target);
+    if (!target) return;
+    const collapsed = target.classList.toggle('collapsed');
+    btn.textContent = collapsed ? '+' : '−';
+    btn.title = collapsed ? 'Mostra' : 'Nascondi';
+  });
+});
+
+animate();
+
+})();
+</script>
+</body>
+</html>
